@@ -37,15 +37,20 @@ import subprocess
 import sys
 from pathlib import Path
 
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).parent))
+from paths import BASE, step_dir
+
 # ── Config ────────────────────────────────────────────────────────────────────
 
-HLA_DIR       = Path.home() / "melanoma-pipeline/data/hla"
-HLA_REF       = Path.home() / "melanoma-pipeline/reference/hla_reference_dna.fasta"
+HLA_DIR       = BASE / "data/hla"
+HLA_REF       = BASE / "reference/hla_reference_dna.fasta"
 CANDIDATES_R1 = HLA_DIR / "hla_candidates_R1.fastq"
 CANDIDATES_R2 = HLA_DIR / "hla_candidates_R2.fastq"
 HLA_FISHED_R1 = HLA_DIR / "hla_fished_R1.fastq"
 HLA_FISHED_R2 = HLA_DIR / "hla_fished_R2.fastq"
-OUT_DIR       = Path.home() / "melanoma-pipeline/results/step3"
+OUT_DIR       = step_dir(3)
 SAMPLE_PREFIX = "hcc1143_normal"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

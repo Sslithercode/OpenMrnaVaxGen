@@ -49,12 +49,17 @@ import subprocess
 import json
 import re
 import sys
-from pathlib import Path
 import os
+
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).parent))
+from paths import step_dir
+
 # ── Config ────────────────────────────────────────────────────────────────────
 
-STEP6_FASTA = Path.home() / "melanoma-pipeline/results/step6/ordered_epitopes.fasta"
-OUT_DIR     = Path.home() / "melanoma-pipeline/results/step7"
+STEP6_FASTA = step_dir(6) / "ordered_epitopes.fasta"
+OUT_DIR     = step_dir(7)
 
 LINKER = "GPGPG"  # must match Step 6 — used to count epitopes from the AA string
 

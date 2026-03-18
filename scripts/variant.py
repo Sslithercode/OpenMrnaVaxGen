@@ -6,13 +6,17 @@ Output: a filtered VCF file containing candidate somatic variants.
 
 import subprocess
 import sys
-from pathlib import Path
 
-GATK_JAR   = Path.home() / "melanoma-pipeline/tools/gatk-4.5.0.0/gatk-package-4.5.0.0-local.jar"
-REFERENCE  = Path.home() / "melanoma-pipeline/reference/hg38.fa"
-TUMOR_BAM  = Path.home() / "melanoma-pipeline/results/step1/sorted.bam"
-NORMAL_BAM = Path.home() / "melanoma-pipeline/data/test/normal_chr17.bam"
-OUT_DIR    = Path.home() / "melanoma-pipeline/results/step2"
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).parent))
+from paths import BASE, step_dir
+
+GATK_JAR   = BASE / "tools/gatk-4.5.0.0/gatk-package-4.5.0.0-local.jar"
+REFERENCE  = BASE / "reference/hg38.fa"
+TUMOR_BAM  = step_dir(1) / "sorted.bam"
+NORMAL_BAM = BASE / "data/test/normal_chr17.bam"
+OUT_DIR    = step_dir(2)
 
 def run(cmd, step_name):
     print(f"\n[{step_name}] running...")

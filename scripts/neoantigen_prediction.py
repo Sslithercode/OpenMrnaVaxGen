@@ -11,15 +11,17 @@ import warnings
 warnings.filterwarnings("ignore")
 
 import pandas as pd
-from pathlib import Path
 from itertools import product
 
-# ── Config ────────────────────────────────────────────────────────────────────
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).parent))
+from paths import BASE, step_dir
 
-VCF_FILE       = Path.home() / "melanoma-pipeline/results/step2/filtered_variants.vcf.gz"
-HLA_FILE = Path.home() / "melanoma-pipeline/results/step3/hla_alleles.txt"
-REFERENCE      = Path.home() / "melanoma-pipeline/reference/hg38.fa"
-OUT_DIR        = Path.home() / "melanoma-pipeline/results/step4"
+VCF_FILE        = step_dir(2) / "filtered_variants.vcf.gz"
+HLA_FILE        = step_dir(3) / "hla_alleles.txt"
+REFERENCE       = BASE / "reference/hg38.fa"
+OUT_DIR         = step_dir(4)
 PEPTIDE_LENGTHS = [8, 9, 10, 11]
 BINDING_CUTOFF  = 500  # nM IC50 — standard threshold for MHC binding
 

@@ -7,13 +7,17 @@ import subprocess
 import sys
 from pathlib import Path
 
-# ── Config ─────────────────────────────────────────
-# ───────────────────────────
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).parent))
+from paths import BASE, step_dir, new_run
 
-GATK_JAR  = Path.home() / "melanoma-pipeline/tools/gatk-4.5.0.0/gatk-package-4.5.0.0-local.jar"
-REFERENCE = Path.home() / "melanoma-pipeline/reference/b37.20.21.fasta"
-INPUT_BAM = Path.home() / "melanoma-pipeline/data/test/test_tumor.bam"
-OUT_DIR   = Path.home() / "melanoma-pipeline/results/step1"
+# ── Config ────────────────────────────────────────────────────────────────────
+
+GATK_JAR  = BASE / "tools/gatk-4.5.0.0/gatk-package-4.5.0.0-local.jar"
+REFERENCE = BASE / "reference/b37.20.21.fasta"
+INPUT_BAM = BASE / "data/test/test_tumor.bam"
+OUT_DIR   = step_dir(1)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -31,6 +35,8 @@ def gatk(args):
 # ── Pipeline ──────────────────────────────────────────────────────────────────
 
 def main():
+    # Step 1 always starts a fresh run — downstream steps inherit the same run ID
+    new_run()
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     # Step 1a: Mark duplicates

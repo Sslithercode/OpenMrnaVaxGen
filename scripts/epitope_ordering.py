@@ -24,14 +24,18 @@ warnings.filterwarnings("ignore")
 
 import pandas as pd
 import numpy as np
-from pathlib import Path
 import os
+
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).parent))
+from paths import step_dir
 
 # ── Config ────────────────────────────────────────────────────────────────────
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
-STEP5_OUTPUT = Path.home() / "melanoma-pipeline/results/step5/ranked_neoantigens.tsv"
-HLA_FILE     = Path.home() / "melanoma-pipeline/results/step3/hla_alleles.txt"
-OUT_DIR      = Path.home() / "melanoma-pipeline/results/step6"
+STEP5_OUTPUT = step_dir(5) / "ranked_neoantigens.tsv"
+HLA_FILE     = step_dir(3) / "hla_alleles.txt"
+OUT_DIR      = step_dir(6)
 
 LINKER       = "GPGPG"
 JUNCTION_LEN = 9    # length of junctional peptides to check

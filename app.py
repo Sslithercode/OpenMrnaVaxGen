@@ -1,10 +1,11 @@
 """
 Melanoma mRNA Vaccine Pipeline — Streamlit UI
-Orchestrates all 7 pipeline steps with adjustable parameters.
+Orchestrates all pipeline steps with adjustable parameters.
 """
 
 import os
 import json
+import sys
 import tempfile
 import textwrap
 import subprocess
@@ -12,15 +13,17 @@ from pathlib import Path
 
 import streamlit as st
 
-# ── Constants ─────────────────────────────────────────────────────────────────
+# ── Paths / run resolver ───────────────────────────────────────────────────────
 
 PROJECT_ROOT = Path(__file__).parent
 VENV_PYTHON  = PROJECT_ROOT / ".venv" / "bin" / "python"
 SCRIPTS_DIR  = PROJECT_ROOT / "scripts"
-RESULTS_DIR  = PROJECT_ROOT / "results"
 TOOLS_DIR    = PROJECT_ROOT / "tools"
 REFERENCE_DIR = PROJECT_ROOT / "reference"
 DATA_DIR     = PROJECT_ROOT / "data"
+
+sys.path.insert(0, str(SCRIPTS_DIR))
+import scripts.paths as _paths  # noqa: E402
 
 STEP_NAMES = {
     1: "Preprocessing",
@@ -30,23 +33,38 @@ STEP_NAMES = {
     5: "Immunogenicity Ranking",
     6: "Epitope Ordering",
     7: "mRNA Design",
+    9: "Report",
 }
 
-ENTRY_B_STEPS = {3, 4, 5, 6, 7}  # steps available when starting from VCF
+ENTRY_B_STEPS = {3, 4, 5, 6, 7, 9}  # steps available when starting from VCF
 
 # ── Session state init ────────────────────────────────────────────────────────
 
+ALL_STEPS = [1, 2, 3, 4, 5, 6, 7, 9]
+
 def init_state():
+    if "run_id" not in st.session_state:
+        st.session_state.run_id = _paths.RUN_ID
     if "step_status" not in st.session_state:
-        st.session_state.step_status = {i: "pending" for i in range(1, 8)}
+        st.session_state.step_status = {i: "pending" for i in ALL_STEPS}
     if "step_logs" not in st.session_state:
-        st.session_state.step_logs = {i: "" for i in range(1, 8)}
+        st.session_state.step_logs = {i: "" for i in ALL_STEPS}
+
+
+def active_run_dir() -> Path:
+    return _paths.RESULTS / st.session_state.run_id
+
+
+def step_default(n: int) -> Path:
+    """Default output directory for step n in the active run."""
+    return active_run_dir() / f"step{n}"
 
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 def run_script(script_code: str, log_placeholder, step_num: int) -> bool:
     """Write a Python script to a temp file, run it with the venv Python,
-    and stream stdout+stderr to the given Streamlit placeholder."""
+    and stream stdout+stderr to the given Streamlit placeholder.
+    Passes PIPELINE_RUN so all steps write into the active run directory."""
     with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False,
                                      prefix="pipeline_step_") as f:
         f.write(script_code)
@@ -55,6 +73,9 @@ def run_script(script_code: str, log_placeholder, step_num: int) -> bool:
     st.session_state.step_status[step_num] = "running"
     output_lines = []
 
+    env = os.environ.copy()
+    env["PIPELINE_RUN"] = st.session_state.run_id
+
     try:
         process = subprocess.Popen(
             [str(VENV_PYTHON), tmp_path],
@@ -62,6 +83,7 @@ def run_script(script_code: str, log_placeholder, step_num: int) -> bool:
             stderr=subprocess.STDOUT,
             text=True,
             cwd=str(PROJECT_ROOT),
+            env=env,
         )
 
         for line in process.stdout:
@@ -120,6 +142,31 @@ with st.sidebar:
     entry_b = entry_point.startswith("B")
 
     st.divider()
+    st.subheader("Active Run")
+    st.code(st.session_state.run_id, language="")
+    st.caption(str(active_run_dir()))
+
+    if st.button("🆕 New Run", help="Start a fresh versioned output directory"):
+        new_id = _paths.new_run()
+        st.session_state.run_id = new_id
+        st.session_state.step_status = {i: "pending" for i in ALL_STEPS}
+        st.session_state.step_logs   = {i: "" for i in ALL_STEPS}
+        st.rerun()
+
+    past_runs = sorted(
+        [d.name for d in _paths.RESULTS.iterdir() if d.is_dir() and d.name.startswith("run_")],
+        reverse=True,
+    ) if _paths.RESULTS.exists() else []
+    if past_runs:
+        selected = st.selectbox("Switch to past run", ["(current)"] + past_runs, key="past_run_select")
+        if selected != "(current)" and selected != st.session_state.run_id:
+            if st.button("Load selected run"):
+                st.session_state.run_id = selected
+                st.session_state.step_status = {i: "pending" for i in ALL_STEPS}
+                st.session_state.step_logs   = {i: "" for i in ALL_STEPS}
+                st.rerun()
+
+    st.divider()
     st.subheader("Shared Paths")
 
     gatk_jar = st.text_input(
@@ -137,25 +184,19 @@ with st.sidebar:
         str(REFERENCE_DIR / "b37.20.21.fasta"),
         key="ref_b37",
     )
-    results_base = st.text_input(
-        "Results base directory",
-        str(RESULTS_DIR),
-        key="results_base",
-    )
 
     st.divider()
-    # Pipeline-wide status summary
     st.subheader("Step Status")
-    for i in range(1, 8):
+    icons = {"pending": "⬜", "running": "🔄", "done": "✅", "failed": "❌"}
+    for i in ALL_STEPS:
         if entry_b and i not in ENTRY_B_STEPS:
             continue
         status = st.session_state.step_status[i]
-        icons = {"pending": "⬜", "running": "🔄", "done": "✅", "failed": "❌"}
         st.write(f"{icons[status]} Step {i}: {STEP_NAMES[i]}")
 
     if st.button("Reset all statuses"):
-        st.session_state.step_status = {i: "pending" for i in range(1, 8)}
-        st.session_state.step_logs   = {i: "" for i in range(1, 8)}
+        st.session_state.step_status = {i: "pending" for i in ALL_STEPS}
+        st.session_state.step_logs   = {i: "" for i in ALL_STEPS}
         st.rerun()
 
 # ── Main tabs ─────────────────────────────────────────────────────────────────
@@ -163,7 +204,7 @@ with st.sidebar:
 tab_labels = (
     ["Overview"]
     + ([] if entry_b else ["1: Preprocess", "2: Variants"])
-    + ["3: HLA", "4: Neoantigens", "5: Rank", "6: Order", "7: mRNA"]
+    + ["3: HLA", "4: Neoantigens", "5: Rank", "6: Order", "7: mRNA", "9: Report"]
 )
 tabs = st.tabs(tab_labels)
 tab_idx = 0
@@ -180,13 +221,16 @@ with tabs[tab_idx]:
         identifies tumor-specific neoantigens, ranks them by immunogenicity, and encodes
         the top candidates into an optimized mRNA vaccine sequence.
 
-        **Entry A (full):** Raw FASTQs → Steps 1 → 2 → 3 → 4 → 5 → 6 → 7
+        **Entry A (full):** Raw FASTQs → Steps 1 → 2 → 3 → 4 → 5 → 6 → 7 → 9
 
-        **Entry B (pre-called):** MAF/VCF → Steps 3 → 4 → 5 → 6 → 7
+        **Entry B (pre-called):** MAF/VCF → Steps 3 → 4 → 5 → 6 → 7 → 9
 
-        Select the entry point in the sidebar and configure per-step parameters in each tab.
+        Each run generates its own versioned output directory. Select the entry point
+        in the sidebar and configure per-step parameters in each tab.
         """
     )
+
+    st.info(f"**Active run:** `{st.session_state.run_id}`  \n**Output:** `{active_run_dir()}`")
 
     st.subheader("Pipeline Diagram")
     st.code(
@@ -200,17 +244,18 @@ Step 4: Neoantigen Prediction  → Candidate peptides     [MHCflurry]
 Step 5: Immunogenicity Ranking → Ranked neoantigen list [composite score]
 Step 6: Epitope Ordering       → Ordered epitope string [TSP/greedy]
 Step 7: mRNA Design            → Full mRNA sequence     [VaxPress + RNAfold]
+Step 9: Report                 → vaccine_report.md      [matplotlib + markdown]
        ↓
-Output: vaccine_mrna.fasta
+Output: results/run_<sample>_<timestamp>/
         """,
         language="",
     )
 
     st.subheader("Current Status")
-    cols = st.columns(7)
+    cols = st.columns(len(ALL_STEPS))
     icons = {"pending": "⬜", "running": "🔄", "done": "✅", "failed": "❌"}
-    for i in range(1, 8):
-        with cols[i - 1]:
+    for idx, i in enumerate(ALL_STEPS):
+        with cols[idx]:
             status = st.session_state.step_status[i]
             st.metric(f"Step {i}", icons[status])
 
@@ -235,7 +280,7 @@ if not entry_b:
                 )
                 s1_out_dir = st.text_input(
                     "Output directory",
-                    str(RESULTS_DIR / "step1"),
+                    str(step_default(1)),
                     key="s1_out_dir",
                 )
             with col2:
@@ -278,7 +323,7 @@ if not entry_b:
             with col1:
                 s2_tumor_bam = st.text_input(
                     "Tumor BAM",
-                    str(RESULTS_DIR / "step1" / "sorted.bam"),
+                    str(step_default(1) / "sorted.bam"),
                     key="s2_tumor_bam",
                 )
                 s2_normal_bam = st.text_input(
@@ -288,7 +333,7 @@ if not entry_b:
                 )
                 s2_out_dir = st.text_input(
                     "Output directory",
-                    str(RESULTS_DIR / "step2"),
+                    str(step_default(2)),
                     key="s2_out_dir",
                 )
             with col2:
@@ -369,7 +414,7 @@ with tabs[tab_idx]:
         )
         s3_out_dir_manual = st.text_input(
             "Output directory (for hla_alleles.txt)",
-            str(RESULTS_DIR / "step3"),
+            str(step_default(3)),
             key="s3_out_dir_manual",
         )
         if st.button("Write HLA alleles manually"):
@@ -392,7 +437,7 @@ with tabs[tab_idx]:
             )
             s3_out_dir = st.text_input(
                 "Output directory",
-                str(RESULTS_DIR / "step3"),
+                str(step_default(3)),
                 key="s3_out_dir",
             )
         with col2:
@@ -473,26 +518,19 @@ with tabs[tab_idx]:
     with st.expander("Parameters", expanded=True):
         col1, col2 = st.columns(2)
         with col1:
-            if entry_b:
-                s4_vcf = st.text_input(
-                    "VCF / MAF file",
-                    str(RESULTS_DIR / "step2" / "filtered_variants.vcf.gz"),
-                    key="s4_vcf",
-                )
-            else:
-                s4_vcf = st.text_input(
-                    "VCF file (Step 2 output)",
-                    str(RESULTS_DIR / "step2" / "filtered_variants.vcf.gz"),
-                    key="s4_vcf",
-                )
+            s4_vcf = st.text_input(
+                "VCF / MAF file",
+                str(step_default(2) / "filtered_variants.vcf.gz"),
+                key="s4_vcf",
+            )
             s4_hla_file = st.text_input(
                 "HLA alleles file (Step 3 output)",
-                str(RESULTS_DIR / "step3" / "hla_alleles.txt"),
+                str(step_default(3) / "hla_alleles.txt"),
                 key="s4_hla_file",
             )
             s4_out_dir = st.text_input(
                 "Output directory",
-                str(RESULTS_DIR / "step4"),
+                str(step_default(4)),
                 key="s4_out_dir",
             )
         with col2:
@@ -548,17 +586,17 @@ with tabs[tab_idx]:
         with col1:
             s5_input = st.text_input(
                 "Step 4 output (candidate_neoantigens.tsv)",
-                str(RESULTS_DIR / "step4" / "candidate_neoantigens.tsv"),
+                str(step_default(4) / "candidate_neoantigens.tsv"),
                 key="s5_input",
             )
             s5_hla_file = st.text_input(
                 "HLA alleles file",
-                str(RESULTS_DIR / "step3" / "hla_alleles.txt"),
+                str(step_default(3) / "hla_alleles.txt"),
                 key="s5_hla_file",
             )
             s5_out_dir = st.text_input(
                 "Output directory",
-                str(RESULTS_DIR / "step5"),
+                str(step_default(5)),
                 key="s5_out_dir",
             )
             s5_top_n = st.number_input(
@@ -625,17 +663,17 @@ with tabs[tab_idx]:
         with col1:
             s6_input = st.text_input(
                 "Step 5 output (ranked_neoantigens.tsv)",
-                str(RESULTS_DIR / "step5" / "ranked_neoantigens.tsv"),
+                str(step_default(5) / "ranked_neoantigens.tsv"),
                 key="s6_input",
             )
             s6_hla_file = st.text_input(
                 "HLA alleles file",
-                str(RESULTS_DIR / "step3" / "hla_alleles.txt"),
+                str(step_default(3) / "hla_alleles.txt"),
                 key="s6_hla_file",
             )
             s6_out_dir = st.text_input(
                 "Output directory",
-                str(RESULTS_DIR / "step6"),
+                str(step_default(6)),
                 key="s6_out_dir",
             )
         with col2:
@@ -687,12 +725,12 @@ with tabs[tab_idx]:
         with col1:
             s7_input = st.text_input(
                 "Step 6 FASTA (ordered_epitopes.fasta)",
-                str(RESULTS_DIR / "step6" / "ordered_epitopes.fasta"),
+                str(step_default(6) / "ordered_epitopes.fasta"),
                 key="s7_input",
             )
             s7_out_dir = st.text_input(
                 "Output directory",
-                str(RESULTS_DIR / "step7"),
+                str(step_default(7)),
                 key="s7_out_dir",
             )
             s7_poly_a_len = st.number_input(
@@ -783,7 +821,7 @@ with tabs[tab_idx]:
     # Show output files if step is done
     if st.session_state.step_status[7] == "done":
         st.subheader("Output Files")
-        out_dir = Path(st.session_state.get("s7_out_dir", str(RESULTS_DIR / "step7")))
+        out_dir = Path(st.session_state.get("s7_out_dir", str(step_default(7))))
         comparison_file = out_dir / "candidate_comparison.json"
         if comparison_file.exists():
             with open(comparison_file) as f:
@@ -800,3 +838,44 @@ with tabs[tab_idx]:
                     "QC": "ISSUES" if m.get("issues") else ("warn" if m.get("warnings") else "pass"),
                 })
             st.dataframe(pd.DataFrame(rows), use_container_width=True)
+
+# ─── Step 9: Report Generation ────────────────────────────────────────────────
+
+with tabs[tab_idx]:
+    tab_idx += 1
+    step_header(9)
+    st.markdown(
+        "Generate a Markdown report with dynamic tables and matplotlib plots "
+        "from all pipeline outputs in the active run."
+    )
+
+    with st.expander("Parameters", expanded=True):
+        s9_out_dir = st.text_input(
+            "Output directory",
+            str(step_default(9)),
+            key="s9_out_dir",
+        )
+
+    show_prior_log(9)
+    log9 = st.empty()
+
+    if st.button("Run Step 9: Generate Report", type="primary"):
+        script = textwrap.dedent(f"""\
+            import sys
+            sys.path.insert(0, {str(SCRIPTS_DIR)!r})
+            import report_generate
+            from pathlib import Path
+            report_generate.OUT_DIR = Path({s9_out_dir!r})
+            report_generate.FIG_DIR = Path({s9_out_dir!r}) / "figures"
+            report_generate.OUT_MD  = Path({s9_out_dir!r}) / "vaccine_report.md"
+            report_generate.main()
+        """)
+        run_script(script, log9, 9)
+        st.rerun()
+
+    if st.session_state.step_status[9] == "done":
+        report_path = Path(st.session_state.get("s9_out_dir", str(step_default(9)))) / "vaccine_report.md"
+        if report_path.exists():
+            st.success(f"Report written to `{report_path}`")
+            with st.expander("Preview report", expanded=True):
+                st.markdown(report_path.read_text(), unsafe_allow_html=False)
