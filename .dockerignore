@@ -1,0 +1,36 @@
+# Exclude large data files and generated outputs from the build context.
+# Scripts and src/ are copied explicitly in the Dockerfile.
+
+# Sequencing data and results
+data/
+results/
+reference/
+
+# GATK and other large tools (installed in image via wget)
+tools/
+
+# Python artifacts
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.egg-info/
+.venv/
+.uv/
+
+# Git
+.git/
+.gitignore
+
+# IDE / OS
+.vscode/
+.idea/
+**/.DS_Store
+
+# Jupyter
+**/.ipynb_checkpoints/
+*.ipynb
+
+# Misc
+*.log
+*.tmp
+uv.lock

@@ -1,0 +1,59 @@
+# Melanoma mRNA Vaccine Pipeline — Docker Compose
+#
+# Step 3 runs in three phases — no Docker-in-Docker required:
+#
+#   Phase 1  (extract reads):
+#     docker compose run --rm pipeline python3 scripts/hla_typing.py --extract
+#
+#   Phase 2  (OptiType):
+#     docker compose run --rm optitype
+#
+#   Phase 3  (parse results):
+#     docker compose run --rm pipeline python3 scripts/hla_typing.py --parse
+#
+# All other steps:
+#   docker compose run --rm pipeline python3 scripts/preprocess.py
+#   docker compose run --rm pipeline python3 scripts/variant.py
+#   docker compose run --rm pipeline python3 scripts/neoantigen_prediction.py
+#   docker compose run --rm pipeline python3 scripts/candidate_ranking.py
+#   docker compose run --rm pipeline python3 scripts/epitope_ordering.py
+#   docker compose run --rm pipeline python3 scripts/mrna_design.py
+#
+# Override host paths with env vars:
+#   DATA_DIR=/path/to/data REFERENCE_DIR=/path/to/ref docker compose run --rm pipeline ...
+
+services:
+
+  # ── Main pipeline container (Steps 1, 2, 3a, 3c, 4–7) ───────────────────────
+  pipeline:
+    build: .
+    image: melanoma-pipeline
+    volumes:
+      - ${DATA_DIR:-./data}:/root/melanoma-pipeline/data
+      - ${REFERENCE_DIR:-./reference}:/root/melanoma-pipeline/reference
+      - ${RESULTS_DIR:-./results}:/root/melanoma-pipeline/results
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    stdin_open: true
+    tty: true
+
+  # ── Step 3, Phase 2: OptiType HLA typing ─────────────────────────────────────
+  # Reads the FASTQs written by `hla_typing.py --extract` and writes a TSV
+  # result to the same results/step3/ directory.
+  # No pipeline image involved — pure fred2/optitype.
+  optitype:
+    image: fred2/optitype
+    command: >
+      OptiTypePipeline.py
+      -i /data/hla_reads_1.fastq /data/hla_reads_2.fastq
+      --dna
+      -o /data
+      -p hcc1143_normal
+      -v
+    volumes:
+      - ${RESULTS_DIR:-./results}/step3:/data
