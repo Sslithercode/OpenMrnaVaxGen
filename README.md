@@ -242,7 +242,7 @@ To minimize immunogenic junctional peptides at GPGPG linker boundaries, epitope 
 ---
 
 ### RoadMap
-- [ ] Run benchmarks starting from neantigen generation step with public data
+- [ ] Run benchmarks starting from neoantigen generation step with public data
 - [ ] Run 1 genome wide test
 - [ ] NetTCR-2.2 / IEDB T cell immunogenicity integration
 
