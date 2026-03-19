@@ -275,7 +275,7 @@ if not entry_b:
             with col1:
                 s1_input_bam = st.text_input(
                     "Input BAM",
-                    str(DATA_DIR / "test" / "test_tumor.bam"),
+                    str(DATA_DIR / "test" / "tumor_chr17.bam"),
                     key="s1_input_bam",
                 )
                 s1_out_dir = st.text_input(
@@ -427,83 +427,58 @@ with tabs[tab_idx]:
             st.session_state.step_status[3] = "done"
 
     st.divider()
-    with st.expander("Phase 1 & 3 Parameters", expanded=True):
+    st.markdown("#### OptiType fallback (CLI only)")
+    st.info(
+        "If you don't have clinical HLA alleles, run OptiType via the terminal:\n\n"
+        "```bash\n"
+        "# Phase 1 — extract HLA reads\n"
+        "docker compose run --rm pipeline python3 scripts/hla_typing.py --optitype\n\n"
+        "# Phase 2 — run OptiType container\n"
+        "OPTITYPE_DATA_DIR=./results/run_<id>/step3 \\\n"
+        "OPTITYPE_SAMPLE=hcc1143_normal \\\n"
+        "docker compose run --rm optitype\n\n"
+        "# Phase 3 — parse results into hla_alleles.txt\n"
+        "docker compose run --rm pipeline python3 scripts/hla_typing.py --parse\n"
+        "```\n\n"
+        "Then use **Manual HLA entry** above to paste the alleles into the UI."
+    )
+
+    st.divider()
+    with st.expander("Parse OptiType results (if you ran OptiType via CLI)", expanded=False):
         col1, col2 = st.columns(2)
         with col1:
-            s3_normal_bam = st.text_input(
-                "Normal BAM",
-                str(DATA_DIR / "test" / "normal_chr17.bam"),
-                key="s3_normal_bam",
-            )
             s3_out_dir = st.text_input(
-                "Output directory",
+                "Step 3 output directory",
                 str(step_default(3)),
                 key="s3_out_dir",
             )
         with col2:
             s3_sample_prefix = st.text_input("Sample prefix", "hcc1143_normal", key="s3_sample_prefix")
-            s3_hla_region    = st.text_input(
-                "HLA region (leave blank for all reads)",
-                "",
-                key="s3_hla_region",
-                help="e.g. chr6:28510120-33480577 for full genome BAMs",
-            )
 
-    show_prior_log(3)
-    log3 = st.empty()
+        show_prior_log(3)
+        log3 = st.empty()
 
-    col_a, col_b = st.columns(2)
-    with col_a:
-        if st.button("Phase 1: Extract HLA reads", type="primary"):
-            hla_region_val = s3_hla_region.strip() if s3_hla_region.strip() else "None"
-            if hla_region_val != "None":
-                hla_region_val = repr(s3_hla_region.strip())
+        if st.button("Parse OptiType results → hla_alleles.txt"):
             script = textwrap.dedent(f"""\
                 import sys
                 sys.path.insert(0, {str(SCRIPTS_DIR)!r})
                 import hla_typing
                 from pathlib import Path
-                hla_typing.NORMAL_BAM    = Path({s3_normal_bam!r})
-                hla_typing.OUT_DIR       = Path({s3_out_dir!r})
-                hla_typing.SAMPLE_PREFIX = {s3_sample_prefix!r}
-                hla_typing.HLA_REGION    = {hla_region_val}
-                hla_typing.OUT_DIR.mkdir(parents=True, exist_ok=True)
-                print("Step 3 — Phase 1: extracting HLA reads")
-                hla_typing.extract_reads(hla_typing.NORMAL_BAM, hla_typing.OUT_DIR, hla_typing.HLA_REGION)
-                print(f"Done. FASTQs written to {{hla_typing.OUT_DIR}}")
-            """)
-            run_script(script, log3, 3)
-            st.rerun()
-
-    with col_b:
-        if st.button("Phase 3: Parse OptiType results"):
-            script = textwrap.dedent(f"""\
-                import sys
-                sys.path.insert(0, {str(SCRIPTS_DIR)!r})
-                import hla_typing
-                from pathlib import Path
-                hla_typing.NORMAL_BAM    = Path({s3_normal_bam!r})
-                hla_typing.OUT_DIR       = Path({s3_out_dir!r})
-                hla_typing.SAMPLE_PREFIX = {s3_sample_prefix!r}
-                hla_typing.OUT_DIR.mkdir(parents=True, exist_ok=True)
-                print("Step 3 — Phase 3: parsing OptiType results")
-                hla_alleles = hla_typing.parse_results(hla_typing.OUT_DIR, hla_typing.SAMPLE_PREFIX)
-                alleles_file = hla_typing.OUT_DIR / "hla_alleles.txt"
+                out_dir = Path({s3_out_dir!r})
+                out_dir.mkdir(parents=True, exist_ok=True)
+                print("Step 3 — parsing OptiType results")
+                hla_alleles = hla_typing.parse_optitype(out_dir, {s3_sample_prefix!r})
+                alleles_file = out_dir / "hla_alleles.txt"
                 with open(alleles_file, "w") as f:
                     for allele in hla_alleles:
                         f.write(allele + "\\n")
-                print("── HLA Typing Results ──")
+                print("── HLA Alleles ──")
                 for allele in hla_alleles:
                     print(f"  {{allele}}")
                 print(f"Step 3 complete. Alleles saved to: {{alleles_file}}")
             """)
             run_script(script, log3, 3)
             st.rerun()
-
-    st.info(
-        "Between Phase 1 and Phase 3, run OptiType on the extracted FASTQs. "
-        "Expected output: `results/step3/<sample_prefix>_result.tsv`"
-    )
 
 # ─── Step 4: Neoantigen Prediction ────────────────────────────────────────────
 
@@ -703,7 +678,7 @@ with tabs[tab_idx]:
             epitope_ordering.OUT_DIR       = Path({s6_out_dir!r})
             epitope_ordering.LINKER        = {s6_linker!r}
             epitope_ordering.JUNCTION_LEN  = {s6_junction_len}
-            epitope_ordering.MAX_GREEDY    = {s6_max_greedy}
+            epitope_ordering.MAX_EXACT     = {s6_max_greedy}
             epitope_ordering.main()
         """)
         run_script(script, log6, 6)

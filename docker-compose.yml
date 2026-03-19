@@ -1,43 +1,14 @@
-# Melanoma mRNA Vaccine Pipeline — Docker Compose
-#
-# ── Streamlit UI (primary entry point) ───────────────────────────────────────
-#   docker compose up app
-#   open http://localhost:8501
-#
-# ── Run individual steps via CLI ──────────────────────────────────────────────
-#   docker compose run --rm pipeline python3 scripts/preprocess.py
-#   docker compose run --rm pipeline python3 scripts/variant.py
-#   docker compose run --rm pipeline python3 scripts/neoantigen_prediction.py
-#   docker compose run --rm pipeline python3 scripts/candidate_ranking.py
-#   docker compose run --rm pipeline python3 scripts/epitope_ordering.py
-#   docker compose run --rm pipeline python3 scripts/mrna_design.py
-#
-# ── Step 3 HLA Typing (three phases) ─────────────────────────────────────────
-#   Phase 1 (extract reads):
-#     docker compose run --rm pipeline python3 scripts/hla_typing.py --extract
-#
-#   Phase 2 (OptiType) — set OPTITYPE_DATA_DIR to your active run's step3 dir:
-#     OPTITYPE_DATA_DIR=./results/run_<id>/step3 docker compose run --rm optitype
-#
-#   Phase 3 (parse results):
-#     docker compose run --rm pipeline python3 scripts/hla_typing.py --parse
-#
-# ── Override host paths ───────────────────────────────────────────────────────
-#   DATA_DIR=/path/to/data REFERENCE_DIR=/path/to/ref docker compose up app
-
 services:
-
-  # ── Streamlit UI (Steps 1–7 + Report, interactive) ────────────────────────
+  # ── Streamlit UI (Steps 1–7 + Report) ────────────────────────
   app:
     build: .
     image: melanoma-pipeline
     ports:
       - "8501:8501"
     volumes:
-      - ${DATA_DIR:-./data}:/root/melanoma-pipeline/data
-      - ${REFERENCE_DIR:-./reference}:/root/melanoma-pipeline/reference
-      - ${RESULTS_DIR:-./results}:/root/melanoma-pipeline/results
-      - ./tools:/root/melanoma-pipeline/tools
+      - ${DATA_DIR:-./data}:/app/data
+      - ${REFERENCE_DIR:-./reference}:/app/reference
+      - ${RESULTS_DIR:-./results}:/app/results
     deploy:
       resources:
         reservations:
@@ -47,16 +18,14 @@ services:
               capabilities: [gpu]
     restart: unless-stopped
 
-  # ── CLI runner (same image, no port, interactive shell) ───────────────────
+  # ── CLI runner ─────────────────────────────────────────────
   pipeline:
-    build: .
     image: melanoma-pipeline
     command: ["/bin/bash"]
     volumes:
-      - ${DATA_DIR:-./data}:/root/melanoma-pipeline/data
-      - ${REFERENCE_DIR:-./reference}:/root/melanoma-pipeline/reference
-      - ${RESULTS_DIR:-./results}:/root/melanoma-pipeline/results
-      - ./tools:/root/melanoma-pipeline/tools
+      - ${DATA_DIR:-./data}:/app/data
+      - ${REFERENCE_DIR:-./reference}:/app/reference
+      - ${RESULTS_DIR:-./results}:/app/results
     deploy:
       resources:
         reservations:
@@ -67,18 +36,26 @@ services:
     stdin_open: true
     tty: true
 
-  # ── Step 3, Phase 2: OptiType HLA typing ─────────────────────────────────
-  # Set OPTITYPE_DATA_DIR to the active run's step3 directory, e.g.:
-  #   OPTITYPE_DATA_DIR=./results/run_HCC1143_20260318_124218/step3
-  # The sample prefix (-p) must match what was used in Phase 1.
+  # ── Index reference genome ──────────────────────────────────
+  index-reference:
+    image: melanoma-pipeline
+    command: >
+      bash -c "
+        REF=/app/reference/hg38.fa &&
+        if [ ! -f $${REF}.fai ]; then
+          samtools faidx $$REF;
+        fi &&
+        if [ ! -f /app/reference/hg38.dict ]; then
+          /app/tools/gatk-4.5.0.0/gatk CreateSequenceDictionary -R $$REF;
+        fi
+      "
+    volumes:
+      - ${REFERENCE_DIR:-./reference}:/app/reference
+
+  # ── Step 3, Phase 2: OptiType (Remains mostly the same) ───
   optitype:
     image: fred2/optitype
-    command: >
-      OptiTypePipeline.py
-      -i /data/hla_reads_1.fastq /data/hla_reads_2.fastq
-      --dna
-      -o /data
-      -p ${OPTITYPE_SAMPLE:-hcc1143_normal}
-      -v
+    # Note: fred2/optitype is a different image entirely, 
+    # so we keep its specific /data volume mapping.
     volumes:
       - ${OPTITYPE_DATA_DIR:-./results/step3}:/data

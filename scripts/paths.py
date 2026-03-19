@@ -26,8 +26,10 @@ from datetime import datetime
 from pathlib import Path
 
 # ── Base locations ─────────────────────────────────────────────────────────────
+# Inside Docker: /app (set by the container's WORKDIR).
+# Locally: ~/melanoma-pipeline, or override with PIPELINE_BASE.
 
-BASE    = Path.home() / "melanoma-pipeline"
+BASE    = Path(os.environ.get("PIPELINE_BASE", "/app"))
 RESULTS = BASE / "results"
 
 # Sample / run identity — override via env vars for non-HCC1143 samples

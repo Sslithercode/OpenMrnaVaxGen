@@ -35,6 +35,7 @@ Step 4: Neoantigen Prediction  → Candidate peptides     [MHCflurry 2.0]
 Step 5: Immunogenicity Ranking → Ranked neoantigen list [composite score, IMPROVE weights]
 Step 6: Epitope Ordering       → Ordered epitope string [Held-Karp exact TSP / greedy]
 Step 7: mRNA Design            → Full mRNA sequence     [VaxPress + LinearFold/RNAfold]
+Step 8: CodonFM Validation     → Expression scoring     [nvidia/NV-CodonFM-80M] (optional/experimental)
 Step 9: Report                 → vaccine_report.md
        ↓
 Output: results/run_<sample>_<timestamp>/
@@ -53,12 +54,17 @@ The following are not versioned and must be set up manually.
 ### 1. Create required directories
 
 ```bash
-mkdir -p tools data/test reference
+mkdir -p data/test reference results
 ```
 
 ### 2. Download GATK 4.5.0.0
 
+> **Docker users: skip this step.** GATK is downloaded and configured automatically during the Docker image build.
+
+For local (non-Docker) runs only:
+
 ```bash
+mkdir -p tools
 wget https://github.com/broadinstitute/gatk/releases/download/4.5.0.0/gatk-4.5.0.0.zip
 unzip gatk-4.5.0.0.zip -d tools/
 rm gatk-4.5.0.0.zip
@@ -66,25 +72,45 @@ rm gatk-4.5.0.0.zip
 
 ### 3. Add reference genomes
 
-Drop the following into `reference/`:
+Download and decompress hg38 from UCSC (~900 MB download, ~3.5 GB uncompressed):
+
+```bash
+uv run --with requests --with tqdm --no-project python scripts/download_reference.py
+```
+
+Then index inside Docker once the image is built (safe to re-run — skips existing files):
+
+```bash
+docker compose run --rm index-reference
+```
 
 | File | Used by |
 |------|---------|
 | `hg38.fa` + `hg38.fa.fai` + `hg38.dict` | Steps 2, 4 (Mutect2 / MHCflurry) |
-| `b37.20.21.fasta` + index | Step 1 (preprocessing) |
-
-The hg38 reference is available from GATK's Google Cloud bucket (`gs://genomics-public-data/resources/broad/hg38/`) or UCSC. Both require indexing with `samtools faidx` and `gatk CreateSequenceDictionary`.
 
 ### 4. Add input data
 
-Drop your tumor and normal BAM/BAI files into `data/test/`:
+Copy `.env.example` to `.env` and add your HuggingFace token:
+
+```bash
+cp .env.example .env
+# edit .env and set HF_TOKEN=your_token
+```
+
+Then run the download script:
+
+```bash
+uv run --with huggingface_hub --with python-dotenv --no-project python scripts/download_data.py
+```
+
+This downloads the HCC1143 tumor/normal BAMs from [SlitherCode/hcc1143_cancer_and_normal_data](https://huggingface.co/datasets/SlitherCode/hcc1143_cancer_and_normal_data) into `data/test/`:
 
 ```
 data/test/
-├── test_tumor.bam
-├── test_tumor.bam.bai
+├── tumor_chr17.bam
+├── tumor_chr17.bai
 ├── normal_chr17.bam
-└── normal_chr17.bam.bai
+└── normal_chr17.bai
 ```
 
 ---
@@ -103,10 +129,10 @@ Volumes are mounted automatically:
 
 | Host path | Container path |
 |-----------|----------------|
-| `./data` | `/root/melanoma-pipeline/data` |
-| `./reference` | `/root/melanoma-pipeline/reference` |
-| `./results` | `/root/melanoma-pipeline/results` |
-| `./tools` | `/root/melanoma-pipeline/tools` |
+| `./data` | `/app/data` |
+| `./reference` | `/app/reference` |
+| `./results` | `/app/results` |
+| `./tools` | `/app/tools` |
 
 Override paths with env vars:
 
@@ -141,6 +167,7 @@ docker compose run --rm pipeline python3 scripts/hla_typing.py --extract
 
 **Phase 2** — run OptiType:
 ```bash
+# Volume mapping uses /app/ inside the container
 OPTITYPE_DATA_DIR=./results/run_<id>/step3 \
 OPTITYPE_SAMPLE=hcc1143_normal \
 docker compose run --rm optitype

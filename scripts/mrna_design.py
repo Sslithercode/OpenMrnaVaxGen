@@ -418,7 +418,6 @@ def quality_checks(cds, mrna, original_epitope_aa, mfe):
 # ── Per-candidate runner ──────────────────────────────────────────────────────
 
 def run_candidate(epitope_aa, candidate):
-    os.system('cls')
     """Run the full Step 7 pipeline for one candidate profile."""
     cid  = candidate["id"]
     desc = candidate["description"]

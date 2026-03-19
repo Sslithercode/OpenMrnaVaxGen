@@ -15,8 +15,8 @@ from paths import BASE, step_dir, new_run
 # ── Config ────────────────────────────────────────────────────────────────────
 
 GATK_JAR  = BASE / "tools/gatk-4.5.0.0/gatk-package-4.5.0.0-local.jar"
-REFERENCE = BASE / "reference/b37.20.21.fasta"
-INPUT_BAM = BASE / "data/test/test_tumor.bam"
+REFERENCE = BASE / "reference/hg38.fa"
+INPUT_BAM = BASE / "data/test/tumor_chr17.bam"
 OUT_DIR   = step_dir(1)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
