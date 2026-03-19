@@ -1,17 +1,17 @@
 # Melanoma mRNA Vaccine Pipeline
 
-> **Work in progress / proof of concept.** Not for clinical use.
+> **Proof of concept / work in progress.** Not for clinical use.
 
-An open-source computational pipeline for designing personalized mRNA vaccines for melanoma. Given tumor/normal sequencing data and a patient's HLA profile, the pipeline identifies tumor-specific neoantigens, ranks them by immunogenicity, and encodes the top candidates into an optimized mRNA vaccine sequence.
+An open-source computational pipeline for designing personalized mRNA vaccines for melanoma. Given tumor/normal sequencing data and a patient's HLA profile, it identifies tumor-specific neoantigens, ranks them by immunogenicity, and encodes the top candidates into an optimized mRNA vaccine sequence.
 
-The UI is a [Streamlit](https://streamlit.io) app that lets you run each step interactively with configurable parameters.
+The UI is a [Streamlit](https://streamlit.io) app that lets you run and configure each step interactively. Docker is the recommended way to run it.
 
 ---
 
-## Pipeline Overview
+## Pipeline
 
 ```
-Input: Tumor WES + Normal WES + (optional) RNA-seq
+Input: Tumor WES + Normal WES
        ↓
 Step 1: Preprocessing          → Clean BAMs             [GATK MarkDuplicates + SortSam]
 Step 2: Variant Calling        → Somatic VCF            [GATK Mutect2 + FilterMutectCalls]
@@ -25,72 +25,148 @@ Step 9: Report                 → vaccine_report.md
 Output: results/run_<sample>_<timestamp>/
 ```
 
-**Entry A (full):** Raw FASTQs → Steps 1 → 2 → 3 → 4 → 5 → 6 → 7 → 9
+**Entry A — full:** Raw FASTQs → Steps 1 → 2 → 3 → 4 → 5 → 6 → 7 → 9
 
-**Entry B (pre-called):** MAF/VCF → Steps 3 → 4 → 5 → 6 → 7 → 9
-
----
-
-## Tools
-
-| Step | Tool | License |
-|------|------|---------|
-| BAM processing | GATK/Picard | BSD |
-| Variant calling | GATK Mutect2 | BSD |
-| HLA typing | OptiType | MIT |
-| MHC binding | MHCflurry | Apache 2.0 |
-| Epitope ordering | TSP / greedy (custom) | — |
-| Codon optimization | VaxPress | MIT |
-| RNA structure | RNAfold (ViennaRNA) | MIT |
+**Entry B — pre-called:** MAF/VCF → Steps 3 → 4 → 5 → 6 → 7 → 9
 
 ---
 
-## Requirements
+## Prerequisites
 
-- Python 3.12+
-- Java (for GATK)
-- [uv](https://github.com/astral-sh/uv) (package manager)
-- BWA, samtools, bcftools (system packages)
-- GATK 4.5.0.0 (bundled under `tools/`)
-- OptiType (Docker recommended for HLA typing step)
-- Reference genomes: `reference/hg38.fa`, `reference/b37.20.21.fasta`
+The following are gitignored and must be set up manually before running.
 
----
-
-## Setup
+### 1. Create required directories
 
 ```bash
-git clone https://github.com/your-username/melanoma-pipeline
-cd melanoma-pipeline
+mkdir -p tools data/test reference
+```
 
+### 2. Download GATK 4.5.0.0
+
+```bash
+wget https://github.com/broadinstitute/gatk/releases/download/4.5.0.0/gatk-4.5.0.0.zip
+unzip gatk-4.5.0.0.zip -d tools/
+rm gatk-4.5.0.0.zip
+```
+
+### 3. Add reference genomes
+
+Drop the following into `reference/`:
+
+| File | Used by |
+|------|---------|
+| `hg38.fa` + `hg38.fa.fai` + `hg38.dict` | Steps 2, 4 (GATK Mutect2 / MHCflurry) |
+| `b37.20.21.fasta` + index | Step 1 (preprocessing) |
+
+The hg38 reference is available from GATK's Google Cloud bucket (`gs://genomics-public-data/resources/broad/hg38/`) or from UCSC. Both require indexing with `samtools faidx` and `gatk CreateSequenceDictionary`.
+
+### 4. Add input data
+
+Drop your tumor and normal BAM/BAI files into `data/test/`:
+
+```
+data/test/
+├── test_tumor.bam
+├── test_tumor.bam.bai
+├── normal_chr17.bam
+└── normal_chr17.bam.bai
+```
+
+The pipeline defaults to these paths in the UI. You can override them per-step.
+
+---
+
+## Running with Docker (recommended)
+
+### Launch the Streamlit UI
+
+```bash
+docker compose up app
+```
+
+Then open [http://localhost:8501](http://localhost:8501).
+
+Volumes are mounted automatically:
+
+| Host path | Container path |
+|-----------|----------------|
+| `./data` | `/root/melanoma-pipeline/data` |
+| `./reference` | `/root/melanoma-pipeline/reference` |
+| `./results` | `/root/melanoma-pipeline/results` |
+| `./tools` | `/root/melanoma-pipeline/tools` |
+
+Override paths with env vars:
+
+```bash
+DATA_DIR=/path/to/data REFERENCE_DIR=/path/to/ref docker compose up app
+```
+
+### Run individual steps via CLI
+
+```bash
+docker compose run --rm pipeline python3 scripts/preprocess.py
+docker compose run --rm pipeline python3 scripts/variant.py
+docker compose run --rm pipeline python3 scripts/neoantigen_prediction.py
+docker compose run --rm pipeline python3 scripts/candidate_ranking.py
+docker compose run --rm pipeline python3 scripts/epitope_ordering.py
+docker compose run --rm pipeline python3 scripts/mrna_design.py
+```
+
+### Step 3: HLA Typing (three phases)
+
+HLA typing requires OptiType, which runs as a separate container between two pipeline phases.
+
+**Phase 1** — extract HLA reads from the normal BAM:
+```bash
+docker compose run --rm pipeline python3 scripts/hla_typing.py --extract
+```
+
+**Phase 2** — run OptiType (set `OPTITYPE_DATA_DIR` to the active run's `step3` dir):
+```bash
+OPTITYPE_DATA_DIR=./results/run_<id>/step3 \
+OPTITYPE_SAMPLE=hcc1143_normal \
+docker compose run --rm optitype
+```
+
+**Phase 3** — parse OptiType results:
+```bash
+docker compose run --rm pipeline python3 scripts/hla_typing.py --parse
+```
+
+Alternatively, if you already have HLA alleles, use the **Manual HLA entry** panel in the Step 3 UI tab to skip OptiType entirely.
+
+---
+
+## Running locally (without Docker)
+
+Requires Python 3.12+, Java 17+, and system packages: `bwa samtools bcftools tabix vienna-rna`.
+
+```bash
 # Install Python dependencies
+pip install uv
 uv sync
 
-# Launch the UI
+# Launch UI
 .venv/bin/streamlit run app.py
 ```
 
 ---
 
-## Usage
-
-1. Open the Streamlit UI in your browser.
-2. Select an entry point in the sidebar (Entry A for raw FASTQs, Entry B if you already have a VCF/MAF).
-3. Configure paths and parameters in each step's tab.
-4. Run steps sequentially. Each run gets its own versioned output directory (`results/run_<sample>_<timestamp>/`).
-
-For HLA typing (Step 3), OptiType must be run manually between Phase 1 (FASTQ extraction) and Phase 3 (result parsing). A manual HLA entry option is also available if you already have alleles.
-
----
-
 ## Output
 
-Each run produces a directory under `results/` containing per-step subdirectories and a final `vaccine_report.md` with:
+Each run produces a versioned directory under `results/`:
 
-- Ranked neoantigen table
-- mRNA construct sequence (FASTA)
-- Candidate comparison (GC%, MFE, length)
-- Quality metrics plots
+```
+results/run_<sample>_<timestamp>/
+├── step1/   sorted.bam
+├── step2/   filtered_variants.vcf.gz
+├── step3/   hla_alleles.txt
+├── step4/   candidate_neoantigens.tsv
+├── step5/   ranked_neoantigens.tsv
+├── step6/   ordered_epitopes.fasta
+├── step7/   vaccine_mrna_*.fasta  candidate_comparison.json
+└── step9/   vaccine_report.md  figures/
+```
 
 ---
 
@@ -104,9 +180,9 @@ Each run produces a directory under `results/` containing per-step subdirectorie
 - [x] Step 6: Epitope Ordering
 - [x] Step 7: mRNA Design
 - [x] Step 9: Report Generation
-- [ ] Snakemake workflow (command-line, no UI)
-- [ ] Docker containers
-- [ ] Biological end-to-end validation on real tumor/normal data
+- [ ] Snakemake workflow (headless, no UI)
+- [ ] Per-step Docker containers
+- [ ] Full biological end-to-end validation on real tumor/normal data
 
 ---
 

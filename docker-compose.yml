@@ -1,17 +1,10 @@
 # Melanoma mRNA Vaccine Pipeline — Docker Compose
 #
-# Step 3 runs in three phases — no Docker-in-Docker required:
+# ── Streamlit UI (primary entry point) ───────────────────────────────────────
+#   docker compose up app
+#   open http://localhost:8501
 #
-#   Phase 1  (extract reads):
-#     docker compose run --rm pipeline python3 scripts/hla_typing.py --extract
-#
-#   Phase 2  (OptiType):
-#     docker compose run --rm optitype
-#
-#   Phase 3  (parse results):
-#     docker compose run --rm pipeline python3 scripts/hla_typing.py --parse
-#
-# All other steps:
+# ── Run individual steps via CLI ──────────────────────────────────────────────
 #   docker compose run --rm pipeline python3 scripts/preprocess.py
 #   docker compose run --rm pipeline python3 scripts/variant.py
 #   docker compose run --rm pipeline python3 scripts/neoantigen_prediction.py
@@ -19,19 +12,51 @@
 #   docker compose run --rm pipeline python3 scripts/epitope_ordering.py
 #   docker compose run --rm pipeline python3 scripts/mrna_design.py
 #
-# Override host paths with env vars:
-#   DATA_DIR=/path/to/data REFERENCE_DIR=/path/to/ref docker compose run --rm pipeline ...
+# ── Step 3 HLA Typing (three phases) ─────────────────────────────────────────
+#   Phase 1 (extract reads):
+#     docker compose run --rm pipeline python3 scripts/hla_typing.py --extract
+#
+#   Phase 2 (OptiType) — set OPTITYPE_DATA_DIR to your active run's step3 dir:
+#     OPTITYPE_DATA_DIR=./results/run_<id>/step3 docker compose run --rm optitype
+#
+#   Phase 3 (parse results):
+#     docker compose run --rm pipeline python3 scripts/hla_typing.py --parse
+#
+# ── Override host paths ───────────────────────────────────────────────────────
+#   DATA_DIR=/path/to/data REFERENCE_DIR=/path/to/ref docker compose up app
 
 services:
 
-  # ── Main pipeline container (Steps 1, 2, 3a, 3c, 4–7) ───────────────────────
-  pipeline:
+  # ── Streamlit UI (Steps 1–7 + Report, interactive) ────────────────────────
+  app:
     build: .
     image: melanoma-pipeline
+    ports:
+      - "8501:8501"
     volumes:
       - ${DATA_DIR:-./data}:/root/melanoma-pipeline/data
       - ${REFERENCE_DIR:-./reference}:/root/melanoma-pipeline/reference
       - ${RESULTS_DIR:-./results}:/root/melanoma-pipeline/results
+      - ./tools:/root/melanoma-pipeline/tools
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  # ── CLI runner (same image, no port, interactive shell) ───────────────────
+  pipeline:
+    build: .
+    image: melanoma-pipeline
+    command: ["/bin/bash"]
+    volumes:
+      - ${DATA_DIR:-./data}:/root/melanoma-pipeline/data
+      - ${REFERENCE_DIR:-./reference}:/root/melanoma-pipeline/reference
+      - ${RESULTS_DIR:-./results}:/root/melanoma-pipeline/results
+      - ./tools:/root/melanoma-pipeline/tools
     deploy:
       resources:
         reservations:
@@ -42,10 +67,10 @@ services:
     stdin_open: true
     tty: true
 
-  # ── Step 3, Phase 2: OptiType HLA typing ─────────────────────────────────────
-  # Reads the FASTQs written by `hla_typing.py --extract` and writes a TSV
-  # result to the same results/step3/ directory.
-  # No pipeline image involved — pure fred2/optitype.
+  # ── Step 3, Phase 2: OptiType HLA typing ─────────────────────────────────
+  # Set OPTITYPE_DATA_DIR to the active run's step3 directory, e.g.:
+  #   OPTITYPE_DATA_DIR=./results/run_HCC1143_20260318_124218/step3
+  # The sample prefix (-p) must match what was used in Phase 1.
   optitype:
     image: fred2/optitype
     command: >
@@ -53,7 +78,7 @@ services:
       -i /data/hla_reads_1.fastq /data/hla_reads_2.fastq
       --dna
       -o /data
-      -p hcc1143_normal
+      -p ${OPTITYPE_SAMPLE:-hcc1143_normal}
       -v
     volumes:
-      - ${RESULTS_DIR:-./results}/step3:/data
+      - ${OPTITYPE_DATA_DIR:-./results/step3}:/data

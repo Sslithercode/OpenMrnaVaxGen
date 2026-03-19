@@ -8,11 +8,15 @@
 # Build:
 #   docker build -t melanoma-pipeline .
 #
-# Run a step (example):
+# Launch Streamlit UI (default):
+#   docker compose up app
+#   open http://localhost:8501
+#
+# Run a step via CLI:
 #   docker compose run --rm pipeline python3 scripts/preprocess.py
 #   docker compose run --rm pipeline python3 scripts/variant.py
 #
-# Step 3 requires the Docker socket for OptiType (handled in docker-compose.yml).
+# Step 3 OptiType is a separate service — see docker-compose.yml.
 # ──────────────────────────────────────────────────────────────────────────────
 
 FROM nvidia/cuda:12.4.1-cudnn9-runtime-ubuntu22.04
@@ -109,10 +113,18 @@ RUN python3 -m pip install --no-cache-dir \
 # Baked into the image so containers are fully self-contained at runtime.
 RUN mhcflurry-downloads fetch
 
-# ── Copy pipeline scripts ──────────────────────────────────────────────────────
+# ── Copy pipeline source ───────────────────────────────────────────────────────
 WORKDIR /root/melanoma-pipeline
-COPY scripts/ scripts/
-COPY src/     src/
+COPY scripts/    scripts/
+COPY src/        src/
+COPY app.py      app.py
+COPY pyproject.toml pyproject.toml
 
-# ── Default: drop into a shell so the user can run any step ───────────────────
-CMD ["/bin/bash"]
+# ── Streamlit port ─────────────────────────────────────────────────────────────
+EXPOSE 8501
+
+# ── Default: launch Streamlit UI ───────────────────────────────────────────────
+CMD ["streamlit", "run", "app.py", \
+     "--server.port=8501", \
+     "--server.address=0.0.0.0", \
+     "--server.headless=true"]
