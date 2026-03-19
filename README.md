@@ -2,7 +2,9 @@
 
 > **Research use only. Not for clinical or diagnostic use.**
 
-This project was Hacked in under 48 hours and is under active development.
+>**This project was Hacked in under 48 hours and is under active development.**
+
+
 An open-source computational pipeline for designing personalized mRNA cancer vaccines. Given tumor/normal sequencing data and a patient's HLA profile, it identifies tumor-specific neoantigens, ranks them by predicted immunogenicity, and encodes the top candidates into an optimized mRNA vaccine sequence ready for wet lab synthesis.
 
 ## Why this exists
