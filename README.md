@@ -89,7 +89,7 @@ data/test/
 
 ---
 
-## Running with Docker (recommended)
+## Running with Docker (experimental)
 
 ### Launch the Streamlit UI
 
@@ -125,7 +125,12 @@ docker compose run --rm pipeline python3 scripts/epitope_ordering.py
 docker compose run --rm pipeline python3 scripts/mrna_design.py
 ```
 
-### Step 3: HLA Typing
+### Step 3: HLA Typing (FALLBACK)
+
+
+### Preferred
+If you already have HLA alleles typed from clinical sequencing, use the **Manual HLA entry** panel in the Step 3 UI tab to skip OptiType entirely.
+
 
 HLA typing uses OptiType, which runs as a separate container between two phases.
 
@@ -146,7 +151,6 @@ docker compose run --rm optitype
 docker compose run --rm pipeline python3 scripts/hla_typing.py --parse
 ```
 
-If you already have HLA alleles typed from clinical sequencing, use the **Manual HLA entry** panel in the Step 3 UI tab to skip OptiType entirely.
 
 ---
 
@@ -185,6 +189,8 @@ The final report (`vaccine_report.md`) includes ranked candidate tables, HLA cov
 ## Ranking methodology
 
 Candidates are scored using a composite immunogenicity metric based on feature importance from [IMPROVE (Frontiers Immunology, 2024)](https://doi.org/10.3389/fimmu.2024.1397590):
+
+these parameters are adjustable in the streamlit ui.
 
 | Feature | Weight | Rationale |
 |---------|--------|-----------|
@@ -239,6 +245,7 @@ To minimize immunogenic junctional peptides at GPGPG linker boundaries, epitope 
 
 MIT
 
+LinearFold is provided under a Non Commercial license: if you want this fully open source use vienna
 ---
 
 ## Citation
