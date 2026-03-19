@@ -236,10 +236,15 @@ To minimize immunogenic junctional peptides at GPGPG linker boundaries, epitope 
 - [ ] Step 8: CodonFM validation
 - [ ] Snakemake headless workflow
 - [ ] Per-step Docker containers
-- [ ] Genome-wide variant calling (currently chr17 test data)
+- [ ] Genome-wide variant calling (currently chr17 toest data)
 - [ ] NetTCR-2.2 / IEDB T cell immunogenicity integration
 
 ---
+
+### RoadMap
+- [ ] Run benchmarks starting from neantigen generation step with public data
+- [ ] Run 1 genome wide test
+- [ ] NetTCR-2.2 / IEDB T cell immunogenicity integration
 
 ## License
 
