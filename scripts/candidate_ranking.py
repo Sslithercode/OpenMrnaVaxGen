@@ -19,12 +19,12 @@ References:
 import warnings, os
 warnings.filterwarnings("ignore")
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
+import sys
 import pandas as pd
 import numpy as np
 
-import sys as _sys
-from pathlib import Path as _Path
-_sys.path.insert(0, str(_Path(__file__).parent))
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent))
 from paths import step_dir
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -37,18 +37,18 @@ OUT_DIR      = step_dir(5)
 W_PRESENTATION = 0.40
 W_AGRETOPICITY = 0.25
 W_VAF          = 0.20
-W_BLOSUM       = 0.10
-W_FOREIGNNESS  = 0.05
+W_BLOSUM       = 0.15  # Increased from 0.10 since foreignness removed as redundant
+W_FOREIGNNESS  = 0.00  # Removed — captured by blosum_score, was double-counting
 
 # Filters
 MAX_AFFINITY_NM  = 500
 MIN_PRESENTATION = 0.1
-MIN_VAF          = 0.05   # [ADDED] Clinical standard: BioNTech/Moderna filter subclonal mutations.
+MIN_VAF          = 0.05   # Clinical standard: BioNTech/Moderna filter subclonal mutations.
                            # VAF < 0.05 = mutation present in <5% of tumor cells -> poor vaccine target.
 TOP_N            = 30
 
 # Flag thresholds (candidates kept but annotated for wet lab review)
-FLAG_NEG_AGRETOPICITY = 0.0   # [ADDED] Negative agretopicity = mutant binds MHC *worse* than wildtype.
+FLAG_NEG_AGRETOPICITY = 0.0   # Negative agretopicity = mutant binds MHC *worse* than wildtype.
                                # T cell repertoire is not depleted of wildtype-specific cells,
                                # so immune response may be misdirected. Flag for review.
 
@@ -127,9 +127,9 @@ def compute_agretopicity(df, hla_alleles):
     from mhcflurry import Class1PresentationPredictor
     predictor = Class1PresentationPredictor.load()
 
-    valid_wt = df[
-        df["wt_peptide"].str.len() == df["length"]
-    ]["wt_peptide"].dropna().unique().tolist()
+    # Explicitly drop nulls before length check to avoid silent NaN comparisons
+    valid_mask = df["wt_peptide"].notna() & (df["wt_peptide"].str.len() == df["length"])
+    valid_wt = df[valid_mask]["wt_peptide"].unique().tolist()
 
     if not valid_wt:
         df["agretopicity"] = 0.0
@@ -144,6 +144,8 @@ def compute_agretopicity(df, hla_alleles):
     wt_best.columns = ["wt_peptide", "wt_affinity"]
 
     df = df.merge(wt_best, on="wt_peptide", how="left")
+    # Rows with no wt prediction (null wt_peptide, length mismatch) get 50000 nM
+    # meaning no MHC binding — agretopicity will be high, which is conservative
     df["wt_affinity"] = df["wt_affinity"].fillna(50000)
     df["agretopicity"] = np.log2(
         df["wt_affinity"].clip(1) / df["affinity"].clip(1)
@@ -153,11 +155,15 @@ def compute_agretopicity(df, hla_alleles):
 
 
 def compute_blosum_score(df):
-    """BLOSUM62 score at mutated positions. Lower = more radical substitution."""
+    """
+    BLOSUM62 score at mutated positions only.
+    Lower score = more radical substitution = more foreign to immune system.
+    This is the primary foreignness signal — foreignness feature removed as redundant.
+    """
     scores = []
     for _, row in df.iterrows():
         mut, wt = row["peptide"], row["wt_peptide"]
-        if len(mut) != len(wt):
+        if not isinstance(wt, str) or len(mut) != len(wt):
             scores.append(0)
             continue
         changed = [blosum62(a, b) for a, b in zip(wt, mut) if a != b]
@@ -166,23 +172,49 @@ def compute_blosum_score(df):
     return df
 
 
-def compute_foreignness(df):
-    """1 - BLOSUM kernel similarity between mutant and wildtype peptide."""
-    def kernel_sim(p1, p2):
-        if len(p1) != len(p2):
-            return 0.0
-        score     = sum(blosum62(a, b) for a, b in zip(p1, p2))
-        self_score = sum(blosum62(a, a) for a in p1)
-        return score / (self_score + 1e-9)
+def score_candidates(df):
+    df["score_presentation"] = df["presentation_score"].clip(0, 1)
 
-    df["foreignness"] = df.apply(
-        lambda r: max(0, 1 - kernel_sim(r["peptide"], r["wt_peptide"])), axis=1
+    ag = df["agretopicity"]
+    df["score_agretopicity"] = (ag - ag.min()) / (ag.max() - ag.min() + 1e-9)
+
+    vaf = df["vaf"].fillna(0.5)
+    df["score_vaf"] = (vaf - vaf.min()) / (vaf.max() - vaf.min() + 1e-9)
+
+    # Invert BLOSUM: lower score = more radical = more foreign = better
+    bl = df["blosum_score"]
+    df["score_blosum"] = 1 - (bl - bl.min()) / (bl.max() - bl.min() + 1e-9)
+
+    df["composite_score"] = (
+        W_PRESENTATION * df["score_presentation"] +
+        W_AGRETOPICITY * df["score_agretopicity"] +
+        W_VAF          * df["score_vaf"] +
+        W_BLOSUM       * df["score_blosum"]
     )
     return df
 
 
-# [ADDED] Flag candidates for wet lab review without removing them from the output.
-# Flags are informational — final include/exclude decision belongs to the researcher.
+def filter_candidates(df):
+    n = len(df)
+    df = df[df["affinity"] <= MAX_AFFINITY_NM]
+    print(f"  After affinity filter (<{MAX_AFFINITY_NM} nM): {len(df)} / {n}")
+    df = df[df["presentation_score"] >= MIN_PRESENTATION]
+    print(f"  After presentation filter (>{MIN_PRESENTATION}): {len(df)}")
+
+    # Hard VAF filter — clinical standard (BioNTech/Moderna pipelines).
+    # Removes subclonal mutations where <5% of tumor cells carry the variant.
+    # Subclonal candidates saved separately for transparency/audit trail.
+    n_before_vaf = len(df)
+    vaf_present = df["vaf"].notna()
+    low_vaf_mask = vaf_present & (df["vaf"] < MIN_VAF)
+    df_low_vaf = df[low_vaf_mask].copy()
+    df = df[~low_vaf_mask]
+    print(f"  After VAF filter (>={MIN_VAF}): {len(df)} / {n_before_vaf} "
+          f"({len(df_low_vaf)} removed as subclonal)")
+
+    return df, df_low_vaf
+
+
 def add_flags(df):
     """
     Annotate candidates with QC flags. Flagged candidates are kept in the output
@@ -207,70 +239,39 @@ def add_flags(df):
     return df
 
 
-def score_candidates(df):
-    df["score_presentation"] = df["presentation_score"].clip(0, 1)
-
-    ag = df["agretopicity"]
-    df["score_agretopicity"] = (ag - ag.min()) / (ag.max() - ag.min() + 1e-9)
-
-    vaf = df["vaf"].fillna(0.5)
-    df["score_vaf"] = (vaf - vaf.min()) / (vaf.max() - vaf.min() + 1e-9)
-
-    bl = df["blosum_score"]
-    df["score_blosum"] = 1 - (bl - bl.min()) / (bl.max() - bl.min() + 1e-9)
-
-    df["score_foreignness"] = df["foreignness"].clip(0, 1)
-
-    df["composite_score"] = (
-        W_PRESENTATION * df["score_presentation"] +
-        W_AGRETOPICITY * df["score_agretopicity"] +
-        W_VAF          * df["score_vaf"] +
-        W_BLOSUM       * df["score_blosum"] +
-        W_FOREIGNNESS  * df["score_foreignness"]
-    )
-    return df
-
-
-def filter_candidates(df):
-    n = len(df)
-    df = df[df["affinity"] <= MAX_AFFINITY_NM]
-    print(f"  After affinity filter (<{MAX_AFFINITY_NM} nM): {len(df)} / {n}")
-    df = df[df["presentation_score"] >= MIN_PRESENTATION]
-    print(f"  After presentation filter (>{MIN_PRESENTATION}): {len(df)}")
-
-    # [ADDED] Hard VAF filter — clinical standard (BioNTech/Moderna pipelines).
-    # Removes subclonal mutations where <5% of tumor cells carry the variant.
-    # These would train T cells against targets absent in the vast majority of tumor.
-    # Candidates failing this filter are saved separately for transparency/audit trail.
-    n_before_vaf = len(df)
-    vaf_present = df["vaf"].notna()
-    low_vaf_mask = vaf_present & (df["vaf"] < MIN_VAF)
-    df_low_vaf = df[low_vaf_mask].copy()
-    df = df[~low_vaf_mask]
-    print(f"  After VAF filter (>={MIN_VAF}): {len(df)} / {n_before_vaf} "
-          f"({len(df_low_vaf)} removed as subclonal)")
-
-    # [CHANGED] Returns tuple (df, df_low_vaf) — caller unpacks both
-    return df, df_low_vaf
-
-
 def select_top_n(df, top_n):
+    """
+    Select best peptide per mutation, then fill to top_n if needed.
+    Uses explicit mutation_id tracking to avoid broken index comparisons.
+    """
     df = df.sort_values("composite_score", ascending=False)
-    best = df.groupby("mutation_id").first().reset_index()
+
+    # Best peptide per mutation
+    best = df.groupby("mutation_id", sort=False).first().reset_index()
     best = best.sort_values("composite_score", ascending=False)
+
     if len(best) >= top_n:
         return best.head(top_n)
-    filler = df[~df.index.isin(best.index)].head(top_n - len(best))
+
+    # Fill remaining slots from peptides whose mutation is already represented
+    best_mutation_ids = set(best["mutation_id"])
+    already_in_best = df["mutation_id"].isin(best_mutation_ids)
+    already_selected_peptides = set(best["peptide"])
+    filler = df[
+        already_in_best & ~df["peptide"].isin(already_selected_peptides)
+    ].head(top_n - len(best))
+
     return pd.concat([best, filler]).sort_values(
         "composite_score", ascending=False
     ).head(top_n)
 
 
-# [ADDED] HLA coverage report — how many top candidates hit each allele.
-# A balanced vaccine should cover all patient alleles, not just the most common.
-# If one allele has 0 candidates in the top N, the patient's T cells expressing
-# that allele have no vaccine targets — may need to relax filters for that allele.
 def print_hla_coverage(df, hla_alleles):
+    """
+    HLA coverage report — how many top candidates hit each allele.
+    A balanced vaccine should cover all patient alleles. Zero coverage
+    for an allele means those T cells have no vaccine targets.
+    """
     print("\n── HLA Coverage (top candidates) ──")
     for allele in hla_alleles:
         count = (df["best_allele"] == allele).sum()
@@ -286,14 +287,14 @@ def main():
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     df = pd.read_csv(STEP4_OUTPUT, sep="\t")
-    print(f"Loaded {len(df)} candidates from Step 4")
+    n_input = len(df)  # Save before filtering — avoid re-reading file later
+    print(f"Loaded {n_input} candidates from Step 4")
 
     with open(HLA_FILE) as f:
         hla_alleles = [l.strip() for l in f if l.strip()]
     print(f"HLA alleles: {hla_alleles}")
 
     print("\nApplying filters:")
-    # [CHANGED] filter_candidates now returns (df, df_low_vaf) — two values
     df, df_low_vaf = filter_candidates(df)
     if df.empty:
         print("No candidates passed filters.")
@@ -302,10 +303,7 @@ def main():
     print("\nComputing features:")
     df = compute_agretopicity(df, hla_alleles)
     df = compute_blosum_score(df)
-    df = compute_foreignness(df)
     df = score_candidates(df)
-
-    # [ADDED] Flag candidates before selecting top N
     df = add_flags(df)
 
     top = select_top_n(df, TOP_N)
@@ -316,7 +314,6 @@ def main():
     )
     top.to_csv(OUT_DIR / "ranked_neoantigens.tsv", sep="\t", index=False)
 
-    # [ADDED] Save subclonal candidates separately for transparency/audit trail
     if not df_low_vaf.empty:
         df_low_vaf.to_csv(
             OUT_DIR / "subclonal_filtered.tsv", sep="\t", index=False
@@ -324,14 +321,12 @@ def main():
         print(f"\n  Subclonal candidates (VAF < {MIN_VAF}) saved to: "
               f"{OUT_DIR / 'subclonal_filtered.tsv'}")
 
-    # [CHANGED] Added flags column to display
     print(f"\n── Top {TOP_N} Vaccine Candidates ──")
     cols = ["mutation_id", "peptide", "best_allele",
             "affinity", "presentation_score", "agretopicity",
             "vaf", "composite_score", "flags"]
     print(top[cols].to_string(index=False))
 
-    # [ADDED] Flag summary — surfaces issues without burying them in the table
     flagged = top[top["flags"] != ""]
     if not flagged.empty:
         print(f"\n── Flagged Candidates ({len(flagged)}) ──")
@@ -339,11 +334,10 @@ def main():
         for _, row in flagged.iterrows():
             print(f"  {row['peptide']:12s}  {row['flags']}")
 
-    # [ADDED] HLA coverage report
     print_hla_coverage(top, hla_alleles)
 
     print(f"\n── Step 5 Summary ──")
-    print(f"  Input:              {len(pd.read_csv(STEP4_OUTPUT, sep=chr(9)))}")
+    print(f"  Input:              {n_input}")
     print(f"  After filters:      {len(df)}")
     print(f"  Subclonal removed:  {len(df_low_vaf)} (VAF < {MIN_VAF})")
     flagged_count = (top["flags"] != "").sum()

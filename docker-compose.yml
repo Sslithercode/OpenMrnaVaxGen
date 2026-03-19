@@ -5,10 +5,18 @@ services:
     image: melanoma-pipeline
     ports:
       - "8501:8501"
+    environment:
+      - XDG_DATA_HOME=/root/.cache
     volumes:
       - ${DATA_DIR:-./data}:/app/data
       - ${REFERENCE_DIR:-./reference}:/app/reference
       - ${RESULTS_DIR:-./results}:/app/results
+      - ./scripts:/app/scripts
+      - ./src:/app/src
+      - ./app.py:/app/app.py
+      - ./entrypoint.sh:/entrypoint.sh
+      - venv_data:/app/.venv
+      - cache_data:/root/.cache
     deploy:
       resources:
         reservations:
@@ -22,10 +30,16 @@ services:
   pipeline:
     image: melanoma-pipeline
     command: ["/bin/bash"]
+    environment:
+      - XDG_DATA_HOME=/root/.cache
     volumes:
       - ${DATA_DIR:-./data}:/app/data
       - ${REFERENCE_DIR:-./reference}:/app/reference
       - ${RESULTS_DIR:-./results}:/app/results
+      - ./scripts:/app/scripts
+      - ./src:/app/src
+      - venv_data:/app/.venv
+      - cache_data:/root/.cache
     deploy:
       resources:
         reservations:
@@ -55,7 +69,11 @@ services:
   # ── Step 3, Phase 2: OptiType (Remains mostly the same) ───
   optitype:
     image: fred2/optitype
-    # Note: fred2/optitype is a different image entirely, 
+    # Note: fred2/optitype is a different image entirely,
     # so we keep its specific /data volume mapping.
     volumes:
       - ${OPTITYPE_DATA_DIR:-./results/step3}:/data
+
+volumes:
+  venv_data:
+  cache_data:

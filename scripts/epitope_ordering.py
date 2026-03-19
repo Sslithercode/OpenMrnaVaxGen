@@ -22,13 +22,13 @@ Output: ordered_epitopes.fasta — the epitope string ready for mRNA encoding
 import warnings
 warnings.filterwarnings("ignore")
 
+import sys
 import pandas as pd
 import numpy as np
 import os
 
-import sys as _sys
-from pathlib import Path as _Path
-_sys.path.insert(0, str(_Path(__file__).parent))
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent))
 from paths import step_dir
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -39,9 +39,8 @@ OUT_DIR      = step_dir(6)
 
 LINKER       = "GPGPG"
 JUNCTION_LEN = 9    # length of junctional peptides to check
-MAX_EXACT    = 15   # [FIXED] use exact TSP for N <= 15, greedy above that.
+MAX_EXACT    = 15   # use exact TSP for N <= 15, greedy above that.
                     # Held-Karp is O(2^N * N^2) — feasible up to ~15, unusable at 30.
-                    # Original code had this inverted (greedy for small N, exact for large).
 
 
 # ── Junction scoring ──────────────────────────────────────────────────────────
@@ -51,7 +50,7 @@ def get_junction_peptides(pep_a, pep_b, length=JUNCTION_LEN):
     Generate all peptides of given length that span the junction
     between peptide A, the GPGPG linker, and peptide B.
 
-    [FIXED] Takes (length-1) residues from each side instead of hardcoded 4.
+    Takes (length-1) residues from each side instead of hardcoded 4.
     Original used pep_a[-4:] + LINKER + pep_b[:4], which:
       - misses junctional peptides that draw more than 4 residues from one side
       - silently under-counts for 8-mer epitopes shorter than 4 residues on one side
@@ -132,8 +131,6 @@ def greedy_ordering(epitopes, junction_matrix):
     unvisited = set(range(n))
 
     # Start from the epitope with the lowest average outgoing junction score
-    # (good heuristic: start from the "quietest" epitope so the worst
-    # junctions accumulate in the middle, not at the ends)
     avg_out = [junction_matrix[i].sum() for i in range(n)]
     start = int(np.argmin(avg_out))
 
@@ -220,13 +217,9 @@ def main():
         hla_alleles = [l.strip() for l in f if l.strip()]
     print(f"HLA alleles: {hla_alleles}")
 
-    # [ADDED] Deduplicate by mutation_id — keep best-ranked peptide per mutation.
-    # Step 5 can surface multiple peptide lengths from the same somatic mutation
-    # (e.g. both 9-mer and 10-mer of the same variant). Including both in the
-    # polyepitope string doubles the antigen load for that mutation with no
-    # additional epitope diversity — the T cell response converges on the same
-    # variant regardless of peptide length.
-    # df is already sorted by composite_score desc so .first() keeps the best.
+    # Deduplicate by mutation_id — keep best-ranked peptide per mutation.
+    # Step 5 can surface multiple peptide lengths from the same somatic mutation.
+    # Including both doubles antigen load with no additional epitope diversity.
     n_before = len(df)
     df = df.groupby("mutation_id", sort=False).first().reset_index()
     df = df.sort_values("composite_score", ascending=False).reset_index(drop=True)
@@ -238,11 +231,14 @@ def main():
     epitopes = df["peptide"].tolist()
     n = len(epitopes)
 
+    if n == 0:
+        print("No epitopes to order. Exiting.")
+        return
+
     # Score all junctions
     junction_matrix = score_all_junctions(epitopes, hla_alleles)
 
-    # [FIXED] Choose algorithm correctly: exact for small N, greedy for large N.
-    # Original code had the condition inverted (ran greedy for small N, exact for large N).
+    # Choose algorithm: exact for small N, greedy for large N
     print(f"\nFinding optimal epitope ordering (N={n})...")
     if n <= MAX_EXACT:
         path, total_score = exact_ordering(epitopes, junction_matrix)
@@ -259,7 +255,7 @@ def main():
     ordered_df = df.iloc[path].copy().reset_index(drop=True)
     ordered_df["order"] = range(1, len(path) + 1)
 
-    # Compute per-junction scores along the chosen path (for reporting)
+    # Compute per-junction scores along the chosen path
     junction_scores_path = [
         junction_matrix[path[i]][path[i + 1]]
         for i in range(len(path) - 1)
@@ -304,15 +300,18 @@ def main():
     )
     junction_df.to_csv(OUT_DIR / "junction_scores.tsv", sep="\t")
 
-    worst_pos = junction_scores_path.index(max(junction_scores_path))
     print(f"\n── Step 6 Summary ──")
     print(f"  Input epitopes:    {n_before}")
     print(f"  After dedup:       {n_after}")
     print(f"  Ordering method:   {method}")
     print(f"  Total junc. score: {total_score:.4f}")
-    print(f"  Worst junction:    {max(junction_scores_path):.3f}  "
-          f"(position {worst_pos + 1} -> {worst_pos + 2}: "
-          f"{ordered_epitopes[worst_pos]} | {ordered_epitopes[worst_pos + 1]})")
+    if junction_scores_path:
+        worst_pos = junction_scores_path.index(max(junction_scores_path))
+        print(f"  Worst junction:    {max(junction_scores_path):.3f}  "
+              f"(position {worst_pos + 1} -> {worst_pos + 2}: "
+              f"{ordered_epitopes[worst_pos]} | {ordered_epitopes[worst_pos + 1]})")
+    else:
+        print(f"  Worst junction:    N/A (single epitope)")
     print(f"  Epitope string:    {len(epitope_string)} aa")
     print(f"\nStep 6 complete.")
     print(f"  Ordered TSV: {OUT_DIR / 'ordered_epitopes.tsv'}")

@@ -14,7 +14,7 @@ from paths import BASE, step_dir
 
 GATK_JAR   = BASE / "tools/gatk-4.5.0.0/gatk-package-4.5.0.0-local.jar"
 REFERENCE  = BASE / "reference/hg38.fa"
-TUMOR_BAM  = step_dir(1) / "sorted.bam"
+TUMOR_BAM  = step_dir(1) / "marked_duplicates.bam"
 NORMAL_BAM = BASE / "data/test/normal_chr17.bam"
 OUT_DIR    = step_dir(2)
 

@@ -1,10 +1,12 @@
+# syntax=docker/dockerfile:1
 # ── STAGE 1: Builder ──────────────────────────────────────────────────────────
 FROM python:3.12-slim-bookworm AS builder
 
 # Install build-only dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    wget unzip git build-essential curl \
-    && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+    wget unzip git build-essential curl
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
@@ -17,12 +19,6 @@ RUN wget -q https://github.com/broadinstitute/gatk/releases/download/4.5.0.0/gat
 # 2. Clone LinearFold
 RUN git clone --depth 1 https://github.com/LinearFold/LinearFold.git /opt/LinearFold
 
-# 3. Install Python deps into a virtualenv at /app/.venv so shebangs match runtime path
-ENV UV_COMPILE_BYTECODE=1 \
-    UV_PYTHON_DOWNLOADS=never
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-install-project --no-dev
-
 # ── STAGE 2: Final Runtime ────────────────────────────────────────────────────
 FROM python:3.12-slim-bookworm
 
@@ -30,43 +26,50 @@ FROM python:3.12-slim-bookworm
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/app/.venv/bin:$PATH" \
-    DEBIAN_FRONTEND=noninteractive
+    DEBIAN_FRONTEND=noninteractive \
+    UV_COMPILE_BYTECODE=1 \
+    UV_PYTHON_DOWNLOADS=never \
+    UV_PROJECT_ENVIRONMENT=/app/.venv
 
 WORKDIR /app
 
-# Copy uv for runtime utility
+# Copy uv for runtime use (entrypoint runs uv sync against mounted venv volume)
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # Install Runtime Bioinformatics Tools
-# Note: Debian 'bookworm' (the base of this slim image) includes most 
-# bio-tools in its default main/universe-equivalent repos.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
     openjdk-17-jre-headless \
+    libgomp1 \
+    libjemalloc2 \
     samtools \
     tabix \
     bcftools \
     bwa \
     bedtools \
     pigz \
-    curl \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    curl
 
 # Copy pre-built assets from builder
 COPY --from=builder /app/tools /app/tools
 COPY --from=builder /opt/LinearFold /LinearFold
-COPY --from=builder /app/.venv /app/.venv
+
+# Copy lockfile so uv sync can run at container startup
+COPY pyproject.toml uv.lock ./
 
 # Copy Application Code
 COPY scripts/ scripts/
 COPY src/ src/
 COPY app.py .
 
-# Download MHCflurry models (layer this last as it's large)
-RUN /app/.venv/bin/mhcflurry-downloads fetch
+# Entrypoint: syncs venv + downloads models on first run, fast on subsequent runs
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 EXPOSE 8501
 
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["streamlit", "run", "app.py", \
      "--server.port=8501", \
      "--server.address=0.0.0.0", \
