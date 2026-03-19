@@ -1,4 +1,4 @@
-# Melanoma mRNA Vaccine Pipeline
+# mRNA Vaccine Pipeline
 
 > **Proof of concept / work in progress.** Not for clinical use.
 
