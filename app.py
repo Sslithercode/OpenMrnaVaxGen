@@ -42,6 +42,23 @@ ENTRY_B_STEPS = {3, 4, 5, 6, 7, 9}  # steps available when starting from VCF
 
 ALL_STEPS = [1, 2, 3, 4, 5, 6, 7, 9]
 
+# Widget keys holding per-run paths — cleared on run switch so they re-render
+# with correct step_default() values instead of stale paths from the old run.
+PER_RUN_PATH_KEYS = [
+    "s1_out_dir",
+    "s2_tumor_bam", "s2_out_dir",
+    "s3_out_dir_manual", "s3_out_dir",
+    "s4_vcf", "s4_hla_file", "s4_out_dir",
+    "s5_input", "s5_hla_file", "s5_out_dir",
+    "s6_input", "s6_hla_file", "s6_out_dir",
+    "s7_input", "s7_out_dir",
+    "s9_out_dir",
+]
+
+def clear_path_widgets():
+    for k in PER_RUN_PATH_KEYS:
+        st.session_state.pop(k, None)
+
 def init_state():
     if "run_id" not in st.session_state:
         st.session_state.run_id = _paths.RUN_ID
@@ -109,8 +126,15 @@ def run_script(script_code: str, log_placeholder, step_num: int) -> bool:
 
 def step_header(step_num: int):
     status = st.session_state.step_status[step_num]
-    icons = {"pending": "⬜", "running": "🔄", "done": "✅", "failed": "❌"}
-    st.markdown(f"### {icons[status]} Step {step_num}: {STEP_NAMES[step_num]}")
+    icons  = {"pending": "–", "running": "···", "done": "✓", "failed": "✕"}
+    labels = {"pending": "Pending", "running": "Running", "done": "Complete", "failed": "Failed"}
+    st.markdown(f"""
+    <div class="step-banner">
+        <span class="step-badge">STEP {step_num}</span>
+        <span class="step-title">{STEP_NAMES[step_num]}</span>
+        <span class="step-status-{status}">{icons[status]} {labels[status]}</span>
+    </div>
+    """, unsafe_allow_html=True)
 
 
 def show_prior_log(step_num: int):
@@ -151,6 +175,7 @@ with st.sidebar:
         st.session_state.run_id = new_id
         st.session_state.step_status = {i: "pending" for i in ALL_STEPS}
         st.session_state.step_logs   = {i: "" for i in ALL_STEPS}
+        clear_path_widgets()
         st.rerun()
 
     past_runs = sorted(
@@ -164,6 +189,7 @@ with st.sidebar:
                 st.session_state.run_id = selected
                 st.session_state.step_status = {i: "pending" for i in ALL_STEPS}
                 st.session_state.step_logs   = {i: "" for i in ALL_STEPS}
+                clear_path_widgets()
                 st.rerun()
 
     st.divider()
@@ -187,7 +213,7 @@ with st.sidebar:
 
     st.divider()
     st.subheader("Step Status")
-    icons = {"pending": "⬜", "running": "🔄", "done": "✅", "failed": "❌"}
+    icons = {"pending": "·", "running": "›", "done": "✓", "failed": "✕"}
     for i in ALL_STEPS:
         if entry_b and i not in ENTRY_B_STEPS:
             continue
@@ -214,50 +240,118 @@ tab_idx = 0
 with tabs[tab_idx]:
     tab_idx += 1
 
-    st.header("Melanoma mRNA Vaccine Pipeline")
-    st.markdown(
-        """
-        This pipeline takes tumor/normal sequencing data and a patient HLA profile,
-        identifies tumor-specific neoantigens, ranks them by immunogenicity, and encodes
-        the top candidates into an optimized mRNA vaccine sequence.
+    st.markdown("""
+    <style>
+    .pipeline-header { font-size: 1.6rem; font-weight: 700; margin-bottom: 0.2rem; color: #0f1117; }
+    .pipeline-sub    { font-size: 0.95rem; color: #555; margin-bottom: 1.5rem; }
+    .run-banner {
+        background: #f0f4ff; border-left: 4px solid #4a6cf7;
+        border-radius: 0 8px 8px 0; padding: 0.7rem 1.1rem;
+        margin-bottom: 1.5rem; font-size: 0.85rem; color: #333;
+    }
+    .run-banner code { background: #dde4ff; padding: 2px 6px; border-radius: 4px; font-size: 0.82rem; }
+    .pipe-wrap { display: flex; flex-direction: column; gap: 0; margin: 1rem 0 2rem 0; max-width: 680px; }
+    .pipe-input {
+        background: #1a1a2e; color: #e0e0ff; border-radius: 10px 10px 0 0;
+        padding: 0.7rem 1.2rem; font-size: 0.82rem; font-weight: 600;
+        letter-spacing: 0.04em; text-align: center;
+    }
+    .pipe-arrow { width: 2px; height: 14px; background: #d1d5db; margin: 0 auto; }
+    .pipe-step {
+        display: flex; align-items: stretch; border: 1px solid #e5e7eb;
+        border-radius: 8px; overflow: hidden; margin: 2px 0;
+    }
+    .pipe-step-num {
+        background: #f9fafb; color: #9ca3af; font-size: 0.68rem; font-weight: 700;
+        padding: 0.5rem 0.75rem; display: flex; align-items: center;
+        justify-content: center; min-width: 52px; border-right: 1px solid #e5e7eb;
+        letter-spacing: 0.06em;
+    }
+    .pipe-step-body { flex: 1; padding: 0.5rem 1rem; display: flex; align-items: center; justify-content: space-between; }
+    .pipe-step-name { font-size: 0.88rem; font-weight: 600; color: #111827; }
+    .pipe-step-out  { font-size: 0.74rem; color: #6b7280; margin-top: 1px; }
+    .pipe-step-tool {
+        font-size: 0.68rem; background: #f3f4f6; color: #374151;
+        padding: 2px 9px; border-radius: 20px; white-space: nowrap; margin-left: 0.6rem;
+    }
+    .pipe-output {
+        background: #064e3b; color: #a7f3d0; border-radius: 0 0 10px 10px;
+        padding: 0.7rem 1.2rem; font-size: 0.82rem; font-weight: 600; text-align: center;
+    }
+    .status-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px; margin-top: 0.5rem; }
+    .status-card { border: 1px solid #e5e7eb; border-radius: 10px; padding: 0.65rem 0.3rem; text-align: center; background: #fafafa; }
+    .status-card.done    { background: #f0fdf4; border-color: #86efac; }
+    .status-card.running { background: #fffbeb; border-color: #fcd34d; }
+    .status-card.failed  { background: #fff1f2; border-color: #fca5a5; }
+    .status-num  { font-size: 0.62rem; font-weight: 700; color: #9ca3af; letter-spacing: 0.08em; text-transform: uppercase; }
+    .status-icon { font-size: 0.8rem; font-weight: 700; line-height: 2; letter-spacing: 0.02em; }
+    .status-card.done    .status-icon { color: #16a34a; }
+    .status-card.running .status-icon { color: #d97706; }
+    .status-card.failed  .status-icon { color: #dc2626; }
+    .status-card.pending .status-icon { color: #9ca3af; }
+    .status-name { font-size: 0.62rem; color: #6b7280; margin-top: 2px; line-height: 1.3; }
+    /* Step tab banner */
+    .step-banner {
+        display: flex; align-items: center; gap: 12px;
+        padding: 0.8rem 1rem; background: #f9fafb;
+        border: 1px solid #e5e7eb; border-radius: 10px; margin-bottom: 1.2rem;
+    }
+    .step-badge {
+        background: #1a1a2e; color: #e0e0ff; font-size: 0.7rem; font-weight: 700;
+        padding: 4px 10px; border-radius: 20px; letter-spacing: 0.06em; white-space: nowrap;
+    }
+    .step-title { font-size: 1.05rem; font-weight: 600; color: #111827; }
+    .step-status-done    { color: #16a34a; font-size: 0.8rem; font-weight: 600; margin-left: auto; }
+    .step-status-running { color: #d97706; font-size: 0.8rem; font-weight: 600; margin-left: auto; }
+    .step-status-failed  { color: #dc2626; font-size: 0.8rem; font-weight: 600; margin-left: auto; }
+    .step-status-pending { color: #9ca3af; font-size: 0.8rem; font-weight: 600; margin-left: auto; }
+    </style>
+    """, unsafe_allow_html=True)
 
-        **Entry A (full):** Raw FASTQs → Steps 1 → 2 → 3 → 4 → 5 → 6 → 7 → 9
+    st.markdown('<p class="pipeline-header">🧬 mRNA Vaccine Pipeline</p>', unsafe_allow_html=True)
+    st.markdown('<p class="pipeline-sub">Tumor sequencing → neoantigen identification → personalized mRNA vaccine construct</p>', unsafe_allow_html=True)
 
-        **Entry B (pre-called):** MAF/VCF → Steps 3 → 4 → 5 → 6 → 7 → 9
+    run_id  = st.session_state.run_id
+    run_dir = str(active_run_dir())
+    st.markdown(f'<div class="run-banner"><strong>Active run:</strong> <code>{run_id}</code> &nbsp;·&nbsp; <strong>Output:</strong> <code>{run_dir}</code></div>', unsafe_allow_html=True)
 
-        Each run generates its own versioned output directory. Select the entry point
-        in the sidebar and configure per-step parameters in each tab.
-        """
-    )
+    steps_meta = [
+        ("1", "Preprocessing",        "Clean BAMs",             "GATK MarkDuplicates"),
+        ("2", "Variant Calling",       "Somatic VCF",            "Mutect2 + Filter"),
+        ("3", "HLA Typing",            "HLA alleles",            "OptiType"),
+        ("4", "Neoantigen Prediction", "Candidate peptides",     "MHCflurry 2.0"),
+        ("5", "Immunogenicity Ranking","Ranked candidates",      "IMPROVE weights"),
+        ("6", "Epitope Ordering",      "Ordered epitope FASTA",  "Held-Karp TSP"),
+        ("7", "mRNA Design",           "Full mRNA construct",    "VaxPress + RNAfold"),
+        ("9", "Report",                "vaccine_report.md",      "matplotlib"),
+    ]
 
-    st.info(f"**Active run:** `{st.session_state.run_id}`  \n**Output:** `{active_run_dir()}`")
+    html = '<div class="pipe-wrap">'
+    html += '<div class="pipe-input">INPUT — Tumor WES + Matched Normal WES</div>'
+    for num, name, output, tool in steps_meta:
+        html += f'<div class="pipe-arrow"></div>'
+        html += f'''<div class="pipe-step">
+            <div class="pipe-step-num">STEP {num}</div>
+            <div class="pipe-step-body">
+                <div><div class="pipe-step-name">{name}</div><div class="pipe-step-out">→ {output}</div></div>
+                <span class="pipe-step-tool">{tool}</span>
+            </div></div>'''
+    html += '<div class="pipe-arrow"></div>'
+    html += '<div class="pipe-output">OUTPUT — results/run_&lt;sample&gt;_&lt;timestamp&gt;/</div>'
+    html += '</div>'
+    st.markdown(html, unsafe_allow_html=True)
 
-    st.subheader("Pipeline Diagram")
-    st.code(
-        """
-Input: Tumor WES + Normal WES + (optional) RNA-seq
-       ↓
-Step 1: Preprocessing          → Clean BAMs             [GATK MarkDuplicates + SortSam]
-Step 2: Variant Calling        → Somatic VCF            [GATK Mutect2 + FilterMutectCalls]
-Step 3: HLA Typing             → HLA alleles            [OptiType]
-Step 4: Neoantigen Prediction  → Candidate peptides     [MHCflurry]
-Step 5: Immunogenicity Ranking → Ranked neoantigen list [composite score]
-Step 6: Epitope Ordering       → Ordered epitope string [TSP/greedy]
-Step 7: mRNA Design            → Full mRNA sequence     [VaxPress + RNAfold]
-Step 9: Report                 → vaccine_report.md      [matplotlib + markdown]
-       ↓
-Output: results/run_<sample>_<timestamp>/
-        """,
-        language="",
-    )
+    st.markdown("#### Run Status")
+    status_map  = st.session_state.step_status
+    step_labels = {1:"Preprocess", 2:"Variants", 3:"HLA", 4:"Neoantigens", 5:"Ranking", 6:"Ordering", 7:"mRNA", 9:"Report"}
+    icon_map    = {"pending": "—", "running": "···", "done": "✓", "failed": "✕"}
 
-    st.subheader("Current Status")
-    cols = st.columns(len(ALL_STEPS))
-    icons = {"pending": "⬜", "running": "🔄", "done": "✅", "failed": "❌"}
-    for idx, i in enumerate(ALL_STEPS):
-        with cols[idx]:
-            status = st.session_state.step_status[i]
-            st.metric(f"Step {i}", icons[status])
+    cards = '<div class="status-grid">'
+    for i in ALL_STEPS:
+        s = status_map[i]
+        cards += f'<div class="status-card {s}"><div class="status-num">Step {i}</div><div class="status-icon">{icon_map[s]}</div><div class="status-name">{step_labels[i]}</div></div>'
+    cards += '</div>'
+    st.markdown(cards, unsafe_allow_html=True)
 
 # ─── Step 1: Preprocessing ────────────────────────────────────────────────────
 
@@ -265,33 +359,26 @@ if not entry_b:
     with tabs[tab_idx]:
         tab_idx += 1
         step_header(1)
-        st.markdown(
-            "Convert raw sequencing reads into clean, analysis-ready BAMs using "
-            "GATK MarkDuplicates and SortSam."
+        st.caption("Convert raw sequencing reads into clean, analysis-ready BAMs using GATK MarkDuplicates and SortSam.")
+
+        # Primary — always visible
+        s1_input_bam = st.text_input(
+            "Input BAM",
+            str(DATA_DIR / "test" / "tumor_chr17.bam"),
+            key="s1_input_bam",
         )
 
-        with st.expander("Parameters", expanded=True):
+        # Advanced — collapsed
+        with st.expander("Advanced", expanded=False):
             col1, col2 = st.columns(2)
             with col1:
-                s1_input_bam = st.text_input(
-                    "Input BAM",
-                    str(DATA_DIR / "test" / "tumor_chr17.bam"),
-                    key="s1_input_bam",
-                )
-                s1_out_dir = st.text_input(
-                    "Output directory",
-                    str(step_default(1)),
-                    key="s1_out_dir",
-                )
+                s1_out_dir = st.text_input("Output directory", str(step_default(1)), key="s1_out_dir")
             with col2:
-                s1_gatk_jar = st.text_input("GATK JAR", gatk_jar, key="s1_gatk_jar")
-                s1_reference = st.text_input(
-                    "Reference", ref_b37, key="s1_reference"
-                )
+                s1_gatk_jar  = st.text_input("GATK JAR", gatk_jar, key="s1_gatk_jar")
+                s1_reference = st.text_input("Reference (b37)", ref_b37, key="s1_reference")
 
         show_prior_log(1)
         log1 = st.empty()
-
         if st.button("Run Step 1: Preprocessing", type="primary"):
             script = textwrap.dedent(f"""\
                 import sys
@@ -313,39 +400,35 @@ if not entry_b:
     with tabs[tab_idx]:
         tab_idx += 1
         step_header(2)
-        st.markdown(
-            "Identify somatic mutations present in tumor but not normal using "
-            "GATK Mutect2 and FilterMutectCalls."
-        )
+        st.caption("Identify somatic mutations present in tumor but not normal using GATK Mutect2 and FilterMutectCalls.")
 
-        with st.expander("Parameters", expanded=True):
+        # Primary — always visible
+        col1, col2 = st.columns(2)
+        with col1:
+            s2_tumor_bam = st.text_input("Tumor BAM", str(step_default(1) / "sorted.bam"), key="s2_tumor_bam")
+        with col2:
+            s2_normal_bam = st.text_input("Normal BAM", str(DATA_DIR / "test" / "normal_chr17.bam"), key="s2_normal_bam")
+
+        # Parameters — collapsed
+        with st.expander("Parameters", expanded=False):
             col1, col2 = st.columns(2)
             with col1:
-                s2_tumor_bam = st.text_input(
-                    "Tumor BAM",
-                    str(step_default(1) / "sorted.bam"),
-                    key="s2_tumor_bam",
-                )
-                s2_normal_bam = st.text_input(
-                    "Normal BAM",
-                    str(DATA_DIR / "test" / "normal_chr17.bam"),
-                    key="s2_normal_bam",
-                )
-                s2_out_dir = st.text_input(
-                    "Output directory",
-                    str(step_default(2)),
-                    key="s2_out_dir",
-                )
-            with col2:
-                s2_gatk_jar  = st.text_input("GATK JAR", gatk_jar, key="s2_gatk_jar")
-                s2_reference = st.text_input("Reference", ref_hg38, key="s2_reference")
                 s2_tumor_name  = st.text_input("Tumor sample name",  "HCC1143_tumor",  key="s2_tumor_name")
                 s2_normal_name = st.text_input("Normal sample name", "HCC1143_normal", key="s2_normal_name")
-                s2_intervals   = st.text_input("Intervals (chromosome)", "chr17", key="s2_intervals")
+            with col2:
+                s2_intervals = st.text_input("Intervals (chromosome)", "chr17", key="s2_intervals")
+
+        # Advanced — collapsed
+        with st.expander("Advanced", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                s2_out_dir   = st.text_input("Output directory", str(step_default(2)), key="s2_out_dir")
+            with col2:
+                s2_gatk_jar  = st.text_input("GATK JAR", gatk_jar, key="s2_gatk_jar")
+                s2_reference = st.text_input("Reference (hg38)", ref_hg38, key="s2_reference")
 
         show_prior_log(2)
         log2 = st.empty()
-
         if st.button("Run Step 2: Variant Calling", type="primary"):
             script = textwrap.dedent(f"""\
                 import sys
@@ -357,7 +440,6 @@ if not entry_b:
                 variant.TUMOR_BAM  = Path({s2_tumor_bam!r})
                 variant.NORMAL_BAM = Path({s2_normal_bam!r})
                 variant.OUT_DIR    = Path({s2_out_dir!r})
-                # patch sample names and intervals inside the Mutect2 command
                 _orig_main = variant.main
                 def _patched_main():
                     import subprocess, sys as _sys
@@ -399,65 +481,54 @@ if not entry_b:
 with tabs[tab_idx]:
     tab_idx += 1
     step_header(3)
-    st.markdown(
-        "Determine the patient's HLA alleles using OptiType. "
-        "Runs in two phases: extract reads, then parse OptiType results. "
-        "OptiType must be run between the two phases (see sidebar for Docker command)."
+    st.caption("Enter HLA alleles directly if you have them from clinical typing, or run OptiType via CLI.")
+
+    # Primary — manual entry is the main path
+    st.markdown("**HLA alleles**")
+    manual_hla = st.text_area(
+        "One allele per line (e.g. HLA-A*02:01)",
+        "HLA-A*02:01\nHLA-A*24:02\nHLA-B*07:02\nHLA-B*35:01\nHLA-C*04:01\nHLA-C*07:02",
+        key="manual_hla",
+        height=140,
     )
 
-    with st.expander("Manual HLA entry (skip OptiType)", expanded=False):
-        st.markdown("If you already have HLA alleles, enter them below to write `hla_alleles.txt` directly.")
-        manual_hla = st.text_area(
-            "HLA alleles (one per line, e.g. HLA-A*02:01)",
-            "HLA-A*02:01\nHLA-A*24:02\nHLA-B*07:02\nHLA-B*35:01\nHLA-C*04:01\nHLA-C*07:02",
-            key="manual_hla",
-        )
+    # Advanced — output dir
+    with st.expander("Advanced", expanded=False):
         s3_out_dir_manual = st.text_input(
-            "Output directory (for hla_alleles.txt)",
-            str(step_default(3)),
-            key="s3_out_dir_manual",
+            "Output directory", str(step_default(3)), key="s3_out_dir_manual"
         )
-        if st.button("Write HLA alleles manually"):
-            out = Path(s3_out_dir_manual)
-            out.mkdir(parents=True, exist_ok=True)
-            alleles = [a.strip() for a in manual_hla.strip().splitlines() if a.strip()]
-            with open(out / "hla_alleles.txt", "w") as f:
-                f.write("\n".join(alleles) + "\n")
-            st.success(f"Wrote {len(alleles)} alleles to {out / 'hla_alleles.txt'}")
-            st.session_state.step_status[3] = "done"
 
-    st.divider()
-    st.markdown("#### OptiType fallback (CLI only)")
-    st.info(
-        "If you don't have clinical HLA alleles, run OptiType via the terminal:\n\n"
-        "```bash\n"
-        "# Phase 1 — extract HLA reads\n"
-        "docker compose run --rm pipeline python3 scripts/hla_typing.py --optitype\n\n"
-        "# Phase 2 — run OptiType container\n"
-        "OPTITYPE_DATA_DIR=./results/run_<id>/step3 \\\n"
-        "OPTITYPE_SAMPLE=hcc1143_normal \\\n"
-        "docker compose run --rm optitype\n\n"
-        "# Phase 3 — parse results into hla_alleles.txt\n"
-        "docker compose run --rm pipeline python3 scripts/hla_typing.py --parse\n"
-        "```\n\n"
-        "Then use **Manual HLA entry** above to paste the alleles into the UI."
-    )
+    if st.button("Write HLA alleles", type="primary"):
+        out = Path(s3_out_dir_manual)
+        out.mkdir(parents=True, exist_ok=True)
+        alleles = [a.strip() for a in manual_hla.strip().splitlines() if a.strip()]
+        with open(out / "hla_alleles.txt", "w") as f:
+            f.write("\n".join(alleles) + "\n")
+        st.success(f"Wrote {len(alleles)} alleles to {out / 'hla_alleles.txt'}")
+        st.session_state.step_status[3] = "done"
 
-    st.divider()
-    with st.expander("Parse OptiType results (if you ran OptiType via CLI)", expanded=False):
+    # OptiType fallback — fully collapsed
+    with st.expander("OptiType fallback (CLI — no HLA from clinical typing)", expanded=False):
+        st.info(
+            "```bash\n"
+            "# Phase 1 — extract HLA reads\n"
+            "docker compose run --rm pipeline python3 scripts/hla_typing.py --optitype\n\n"
+            "# Phase 2 — run OptiType container\n"
+            "OPTITYPE_DATA_DIR=./results/run_<id>/step3 \\\n"
+            "OPTITYPE_SAMPLE=hcc1143_normal \\\n"
+            "docker compose run --rm optitype\n\n"
+            "# Phase 3 — parse results\n"
+            "docker compose run --rm pipeline python3 scripts/hla_typing.py --parse\n"
+            "```"
+        )
         col1, col2 = st.columns(2)
         with col1:
-            s3_out_dir = st.text_input(
-                "Step 3 output directory",
-                str(step_default(3)),
-                key="s3_out_dir",
-            )
+            s3_out_dir = st.text_input("Step 3 output directory", str(step_default(3)), key="s3_out_dir")
         with col2:
             s3_sample_prefix = st.text_input("Sample prefix", "hcc1143_normal", key="s3_sample_prefix")
 
         show_prior_log(3)
         log3 = st.empty()
-
         if st.button("Parse OptiType results → hla_alleles.txt"):
             script = textwrap.dedent(f"""\
                 import sys
@@ -485,50 +556,51 @@ with tabs[tab_idx]:
 with tabs[tab_idx]:
     tab_idx += 1
     step_header(4)
-    st.markdown(
-        "Generate candidate peptides from somatic mutations and predict MHC binding "
-        "affinity using MHCflurry."
-    )
+    st.caption("Extract mutant peptides from somatic variants and predict MHC binding affinity with MHCflurry 2.0.")
 
-    with st.expander("Parameters", expanded=True):
+    # Primary — inputs
+    col1, col2 = st.columns(2)
+    with col1:
+        s4_vcf = st.text_input(
+            "VCF / MAF file",
+            str(step_default(2) / "filtered_variants.vcf.gz"),
+            key="s4_vcf",
+        )
+    with col2:
+        s4_hla_file = st.text_input(
+            "HLA alleles file",
+            str(step_default(3) / "hla_alleles.txt"),
+            key="s4_hla_file",
+        )
+
+    # Parameters — collapsed
+    with st.expander("Parameters", expanded=False):
         col1, col2 = st.columns(2)
         with col1:
-            s4_vcf = st.text_input(
-                "VCF / MAF file",
-                str(step_default(2) / "filtered_variants.vcf.gz"),
-                key="s4_vcf",
-            )
-            s4_hla_file = st.text_input(
-                "HLA alleles file (Step 3 output)",
-                str(step_default(3) / "hla_alleles.txt"),
-                key="s4_hla_file",
-            )
-            s4_out_dir = st.text_input(
-                "Output directory",
-                str(step_default(4)),
-                key="s4_out_dir",
-            )
-        with col2:
-            s4_reference = st.text_input("Reference", ref_hg38, key="s4_reference")
             s4_peptide_lengths = st.multiselect(
                 "Peptide lengths",
                 options=[8, 9, 10, 11, 12],
                 default=[8, 9, 10, 11],
                 key="s4_peptide_lengths",
             )
+        with col2:
             s4_binding_cutoff = st.number_input(
                 "Binding cutoff (IC50 nM)",
-                min_value=50,
-                max_value=5000,
-                value=500,
-                step=50,
+                min_value=50, max_value=5000, value=500, step=50,
                 key="s4_binding_cutoff",
                 help="MHC binding threshold — standard is 500 nM",
             )
 
+    # Advanced — collapsed
+    with st.expander("Advanced", expanded=False):
+        col1, col2 = st.columns(2)
+        with col1:
+            s4_out_dir = st.text_input("Output directory", str(step_default(4)), key="s4_out_dir")
+        with col2:
+            s4_reference = st.text_input("Reference (hg38)", ref_hg38, key="s4_reference")
+
     show_prior_log(4)
     log4 = st.empty()
-
     if st.button("Run Step 4: Neoantigen Prediction", type="primary"):
         script = textwrap.dedent(f"""\
             import sys
@@ -551,55 +623,47 @@ with tabs[tab_idx]:
 with tabs[tab_idx]:
     tab_idx += 1
     step_header(5)
-    st.markdown(
-        "Score neoantigen candidates using a composite immunogenicity model "
-        "(IMPROVE 2024 feature importance). Outputs ranked list of top vaccine targets."
-    )
+    st.caption("Score candidates using a composite immunogenicity model based on IMPROVE 2024 feature importance.")
 
-    with st.expander("Parameters", expanded=True):
+    # Primary — input + top N
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        s5_input = st.text_input(
+            "Candidates TSV (Step 4 output)",
+            str(step_default(4) / "candidate_neoantigens.tsv"),
+            key="s5_input",
+        )
+    with col2:
+        s5_top_n = st.number_input("Top N", min_value=5, max_value=50, value=30, step=1, key="s5_top_n")
+
+    # Parameters — scoring weights, open by default since they're interesting
+    with st.expander("Scoring weights", expanded=True):
+        st.caption("Based on IMPROVE (Frontiers Immunology 2024) feature importance. Must sum to 1.0.")
         col1, col2 = st.columns(2)
         with col1:
-            s5_input = st.text_input(
-                "Step 4 output (candidate_neoantigens.tsv)",
-                str(step_default(4) / "candidate_neoantigens.tsv"),
-                key="s5_input",
-            )
-            s5_hla_file = st.text_input(
-                "HLA alleles file",
-                str(step_default(3) / "hla_alleles.txt"),
-                key="s5_hla_file",
-            )
-            s5_out_dir = st.text_input(
-                "Output directory",
-                str(step_default(5)),
-                key="s5_out_dir",
-            )
-            s5_top_n = st.number_input(
-                "Top N candidates",
-                min_value=5,
-                max_value=50,
-                value=30,
-                step=1,
-                key="s5_top_n",
-            )
+            s5_w_pres = st.slider("Presentation score", 0.0, 1.0, 0.40, 0.05, key="s5_w_pres")
+            s5_w_agr  = st.slider("Agretopicity (DAI)", 0.0, 1.0, 0.25, 0.05, key="s5_w_agr")
+            s5_w_vaf  = st.slider("VAF / clonality",    0.0, 1.0, 0.20, 0.05, key="s5_w_vaf")
         with col2:
-            st.markdown("**Composite score weights** (must sum to ~1.0)")
-            st.caption("Based on IMPROVE (Frontiers Immunology 2024) feature importance")
-            s5_w_pres = st.slider("Presentation score weight", 0.0, 1.0, 0.40, 0.05, key="s5_w_pres")
-            s5_w_agr  = st.slider("Agretopicity (DAI) weight", 0.0, 1.0, 0.25, 0.05, key="s5_w_agr")
-            s5_w_vaf  = st.slider("VAF / clonality weight",    0.0, 1.0, 0.20, 0.05, key="s5_w_vaf")
-            s5_w_bl   = st.slider("BLOSUM mutation weight",    0.0, 1.0, 0.10, 0.05, key="s5_w_bl")
-            s5_w_for  = st.slider("Foreignness weight",        0.0, 1.0, 0.05, 0.05, key="s5_w_for")
+            s5_w_bl   = st.slider("BLOSUM score",       0.0, 1.0, 0.10, 0.05, key="s5_w_bl")
+            s5_w_for  = st.slider("Foreignness",        0.0, 1.0, 0.05, 0.05, key="s5_w_for")
             total_w = s5_w_pres + s5_w_agr + s5_w_vaf + s5_w_bl + s5_w_for
-            st.caption(f"Total weight: {total_w:.2f} {'✅' if abs(total_w - 1.0) < 0.01 else '⚠️ should be 1.0'}")
+            color = "green" if abs(total_w - 1.0) < 0.01 else "red"
+            st.markdown(f"Total: <span style='color:{color}; font-weight:600'>{total_w:.2f}</span>", unsafe_allow_html=True)
 
-            st.markdown("**Filters**")
-            s5_max_aff  = st.number_input("Max affinity (nM IC50)", 50, 5000, 500, 50, key="s5_max_aff")
+    # Advanced — filters, output dir, HLA file
+    with st.expander("Advanced", expanded=False):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            s5_out_dir = st.text_input("Output directory", str(step_default(5)), key="s5_out_dir")
+        with col2:
+            s5_hla_file = st.text_input("HLA alleles file", str(step_default(3) / "hla_alleles.txt"), key="s5_hla_file")
+        with col3:
+            s5_max_aff  = st.number_input("Max affinity (nM)", 50, 5000, 500, 50, key="s5_max_aff")
             s5_min_pres = st.number_input("Min presentation score", 0.0, 1.0, 0.1, 0.05, key="s5_min_pres")
 
     show_prior_log(5)
     log5 = st.empty()
-
     if st.button("Run Step 5: Immunogenicity Ranking", type="primary"):
         script = textwrap.dedent(f"""\
             import sys
@@ -627,46 +691,40 @@ with tabs[tab_idx]:
 with tabs[tab_idx]:
     tab_idx += 1
     step_header(6)
-    st.markdown(
-        "Find the optimal concatenation order of epitopes to minimize junctional "
-        "neoantigens. Uses exact TSP (Held-Karp) for small N, greedy nearest-neighbor "
-        "for large N."
+    st.caption("Optimal epitope concatenation order to minimize junctional neoantigens. Held-Karp exact TSP for N≤15, greedy for N>15.")
+
+    # Primary — input file
+    s6_input = st.text_input(
+        "Ranked neoantigens TSV (Step 5 output)",
+        str(step_default(5) / "ranked_neoantigens.tsv"),
+        key="s6_input",
     )
 
-    with st.expander("Parameters", expanded=True):
+    # Parameters — linker config
+    with st.expander("Parameters", expanded=False):
         col1, col2 = st.columns(2)
         with col1:
-            s6_input = st.text_input(
-                "Step 5 output (ranked_neoantigens.tsv)",
-                str(step_default(5) / "ranked_neoantigens.tsv"),
-                key="s6_input",
-            )
-            s6_hla_file = st.text_input(
-                "HLA alleles file",
-                str(step_default(3) / "hla_alleles.txt"),
-                key="s6_hla_file",
-            )
-            s6_out_dir = st.text_input(
-                "Output directory",
-                str(step_default(6)),
-                key="s6_out_dir",
-            )
-        with col2:
             s6_linker       = st.text_input("GPGPG linker sequence", "GPGPG", key="s6_linker")
+        with col2:
             s6_junction_len = st.number_input(
-                "Junction peptide length",
-                min_value=7, max_value=11, value=9, step=1, key="s6_junction_len",
-                help="Length of junctional peptides to check for MHC binding",
+                "Junction peptide length", min_value=7, max_value=11, value=9, step=1,
+                key="s6_junction_len", help="Length of junctional peptides to check for MHC binding",
             )
             s6_max_greedy = st.number_input(
-                "Max epitopes for greedy (vs exact TSP)",
-                min_value=5, max_value=50, value=30, step=1, key="s6_max_greedy",
-                help="Above this count use greedy, below use exact TSP (2^N)",
+                "Exact TSP threshold (N)",  min_value=5, max_value=50, value=15, step=1,
+                key="s6_max_greedy", help="Use exact Held-Karp below this, greedy above",
             )
+
+    # Advanced — paths
+    with st.expander("Advanced", expanded=False):
+        col1, col2 = st.columns(2)
+        with col1:
+            s6_out_dir  = st.text_input("Output directory", str(step_default(6)), key="s6_out_dir")
+        with col2:
+            s6_hla_file = st.text_input("HLA alleles file", str(step_default(3) / "hla_alleles.txt"), key="s6_hla_file")
 
     show_prior_log(6)
     log6 = st.empty()
-
     if st.button("Run Step 6: Epitope Ordering", type="primary"):
         script = textwrap.dedent(f"""\
             import sys
@@ -689,64 +747,33 @@ with tabs[tab_idx]:
 with tabs[tab_idx]:
     tab_idx += 1
     step_header(7)
-    st.markdown(
-        "Design a full optimized mRNA vaccine construct encoding the epitope string. "
-        "Runs VaxPress codon optimization with multiple candidate profiles, "
-        "assembles the full construct, and validates with RNAfold."
+    st.caption("VaxPress codon optimization across multiple profiles, assembled with 5'UTR/Kozak/poly-A and validated with RNAfold.")
+
+    # Primary — input FASTA
+    s7_input = st.text_input(
+        "Ordered epitopes FASTA (Step 6 output)",
+        str(step_default(6) / "ordered_epitopes.fasta"),
+        key="s7_input",
     )
 
-    with st.expander("Construct Parameters", expanded=True):
-        col1, col2 = st.columns(2)
-        with col1:
-            s7_input = st.text_input(
-                "Step 6 FASTA (ordered_epitopes.fasta)",
-                str(step_default(6) / "ordered_epitopes.fasta"),
-                key="s7_input",
-            )
-            s7_out_dir = st.text_input(
-                "Output directory",
-                str(step_default(7)),
-                key="s7_out_dir",
-            )
-            s7_poly_a_len = st.number_input(
-                "Poly-A tail length (nt)",
-                min_value=60, max_value=300, value=120, step=10, key="s7_poly_a_len",
-            )
-        with col2:
-            s7_vaxpress_iters = st.number_input(
-                "VaxPress iterations",
-                min_value=50, max_value=1000, value=200, step=50, key="s7_vaxpress_iters",
-            )
-            s7_vaxpress_procs = st.number_input(
-                "VaxPress processes",
-                min_value=1, max_value=32, value=8, step=1, key="s7_vaxpress_procs",
-            )
-            s7_utr5  = st.text_input("5' UTR", "GGGAAATAAGAGAGAAAAGAAGAGTAAGAAGAAATATAAGAGCCACC", key="s7_utr5")
-            s7_kozak = st.text_input("Kozak sequence", "GCCACCATG", key="s7_kozak")
-
-    with st.expander("Candidate Profiles", expanded=True):
-        st.markdown(
-            "Each profile runs VaxPress with different weight overrides, sweeping the "
-            "MFE/CAI tradeoff (mirroring LinearDesign Nature 2023 λ sweep). "
-            "Step 8 CodonFM scoring ranks them."
-        )
-
+    # Candidate profiles — open by default, this is the interesting part
+    with st.expander("Candidate profiles", expanded=True):
+        st.caption("Each profile sweeps the MFE/CAI tradeoff (mirroring LinearDesign Nature 2023 λ sweep).")
         s7_candidates = []
         profile_defaults = [
-            ("A_balanced",    "Balanced MFE + CAI (default)", {}),
-            ("B_stability",   "Stability-biased (longer half-life)", {"mfe": 10, "cai": 2, "loop": 5}),
-            ("C_expression",  "Expression-biased (higher protein yield)", {"mfe": 2, "cai": 10, "gc": 3}),
-            ("D_low_uridine", "Uridine-minimized (reduced innate immune activation)", {"ucount": 10, "mfe": 5, "cai": 3}),
+            ("A_balanced",    "Balanced MFE + CAI", {}),
+            ("B_stability",   "Stability-biased — longer half-life", {"mfe": 10, "cai": 2, "loop": 5}),
+            ("C_expression",  "Expression-biased — higher protein yield", {"mfe": 2, "cai": 10, "gc": 3}),
+            ("D_low_uridine", "Uridine-minimized — reduced innate immune activation", {"ucount": 10, "mfe": 5, "cai": 3}),
         ]
-
         for i, (pid, pdesc, pweights) in enumerate(profile_defaults):
             with st.container():
-                cols = st.columns([2, 3, 4])
+                cols = st.columns([1, 3, 4])
                 with cols[0]:
-                    enabled = st.checkbox(f"Enable", value=True, key=f"s7_cand_enabled_{i}")
-                    cand_id = st.text_input("ID", pid, key=f"s7_cand_id_{i}")
+                    enabled = st.checkbox("On", value=True, key=f"s7_cand_enabled_{i}")
+                    cand_id = st.text_input("ID", pid, key=f"s7_cand_id_{i}", label_visibility="collapsed")
                 with cols[1]:
-                    cand_desc = st.text_input("Description", pdesc, key=f"s7_cand_desc_{i}")
+                    cand_desc = st.text_input("Description", pdesc, key=f"s7_cand_desc_{i}", label_visibility="collapsed")
                 with cols[2]:
                     weight_keys = ["mfe", "cai", "ucount", "loop", "gc"]
                     weight_vals = {}
@@ -754,25 +781,33 @@ with tabs[tab_idx]:
                     for j, wk in enumerate(weight_keys):
                         with wcols[j]:
                             default_val = pweights.get(wk, 0)
-                            v = st.number_input(
-                                wk, min_value=0, max_value=20,
-                                value=default_val, step=1,
-                                key=f"s7_w_{i}_{wk}",
-                                label_visibility="visible",
-                            )
+                            v = st.number_input(wk, min_value=0, max_value=20, value=default_val, step=1, key=f"s7_w_{i}_{wk}")
                             if v > 0:
                                 weight_vals[wk] = v
                 if enabled:
-                    s7_candidates.append({
-                        "id": cand_id,
-                        "description": cand_desc,
-                        "weights": weight_vals,
-                    })
+                    s7_candidates.append({"id": cand_id, "description": cand_desc, "weights": weight_vals})
                 st.divider()
+
+    # Parameters — VaxPress tuning
+    with st.expander("Parameters", expanded=False):
+        col1, col2 = st.columns(2)
+        with col1:
+            s7_vaxpress_iters = st.number_input("VaxPress iterations", min_value=50, max_value=1000, value=200, step=50, key="s7_vaxpress_iters")
+        with col2:
+            s7_vaxpress_procs = st.number_input("VaxPress processes",  min_value=1,  max_value=32,   value=8,   step=1,  key="s7_vaxpress_procs")
+
+    # Advanced — construct sequences, output dir
+    with st.expander("Advanced", expanded=False):
+        col1, col2 = st.columns(2)
+        with col1:
+            s7_out_dir    = st.text_input("Output directory", str(step_default(7)), key="s7_out_dir")
+            s7_poly_a_len = st.number_input("Poly-A tail length (nt)", min_value=60, max_value=300, value=120, step=10, key="s7_poly_a_len")
+        with col2:
+            s7_utr5  = st.text_input("5' UTR",         "GGGAAATAAGAGAGAAAAGAAGAGTAAGAAGAAATATAAGAGCCACC", key="s7_utr5")
+            s7_kozak = st.text_input("Kozak sequence",  "GCCACCATG", key="s7_kozak")
 
     show_prior_log(7)
     log7 = st.empty()
-
     if st.button("Run Step 7: mRNA Design", type="primary"):
         candidates_repr = repr(s7_candidates)
         script = textwrap.dedent(f"""\
@@ -793,9 +828,8 @@ with tabs[tab_idx]:
         run_script(script, log7, 7)
         st.rerun()
 
-    # Show output files if step is done
     if st.session_state.step_status[7] == "done":
-        st.subheader("Output Files")
+        st.subheader("Results")
         out_dir = Path(st.session_state.get("s7_out_dir", str(step_default(7))))
         comparison_file = out_dir / "candidate_comparison.json"
         if comparison_file.exists():
@@ -805,12 +839,12 @@ with tabs[tab_idx]:
             rows = []
             for m in comparison:
                 rows.append({
-                    "Candidate": m["candidate_id"],
-                    "Description": m["description"],
-                    "GC %": f"{m['gc_content']:.1%}" if m.get("gc_content") else "N/A",
+                    "Candidate":      m["candidate_id"],
+                    "Description":    m["description"],
+                    "GC %":           f"{m['gc_content']:.1%}" if m.get("gc_content") else "N/A",
                     "MFE (kcal/mol)": f"{m['mfe_kcal_mol']:.2f}" if m.get("mfe_kcal_mol") else "N/A",
-                    "Length (nt)": m.get("total_length_nt", "N/A"),
-                    "QC": "ISSUES" if m.get("issues") else ("warn" if m.get("warnings") else "pass"),
+                    "Length (nt)":    m.get("total_length_nt", "N/A"),
+                    "QC":             "ISSUES" if m.get("issues") else ("warn" if m.get("warnings") else "pass"),
                 })
             st.dataframe(pd.DataFrame(rows), use_container_width=True)
 
@@ -819,21 +853,13 @@ with tabs[tab_idx]:
 with tabs[tab_idx]:
     tab_idx += 1
     step_header(9)
-    st.markdown(
-        "Generate a Markdown report with dynamic tables and matplotlib plots "
-        "from all pipeline outputs in the active run."
-    )
+    st.caption("Generate a Markdown report with dynamic tables and matplotlib plots from all pipeline outputs.")
 
-    with st.expander("Parameters", expanded=True):
-        s9_out_dir = st.text_input(
-            "Output directory",
-            str(step_default(9)),
-            key="s9_out_dir",
-        )
+    with st.expander("Advanced", expanded=False):
+        s9_out_dir = st.text_input("Output directory", str(step_default(9)), key="s9_out_dir")
 
     show_prior_log(9)
     log9 = st.empty()
-
     if st.button("Run Step 9: Generate Report", type="primary"):
         script = textwrap.dedent(f"""\
             import sys
