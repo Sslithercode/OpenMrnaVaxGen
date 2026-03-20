@@ -2,6 +2,9 @@
 
 > **Research use only. Not for clinical or diagnostic use.**
 
+>**This project was Hacked in under 48 hours and is under active development.**
+
+
 An open-source computational pipeline for designing personalized mRNA cancer vaccines. Given tumor/normal sequencing data and a patient's HLA profile, it identifies tumor-specific neoantigens, ranks them by predicted immunogenicity, and encodes the top candidates into an optimized mRNA vaccine sequence ready for wet lab synthesis.
 
 ## Why this exists
@@ -10,18 +13,7 @@ Every cancer patient's tumor carries a unique set of somatic mutations. Some of 
 
 This pipeline automates the full computational workflow: calling somatic variants from tumor/normal sequencing, predicting which mutant peptides bind the patient's specific HLA alleles, ranking candidates by predicted immunogenicity, and assembling the top epitopes into an optimized mRNA construct. The output is a FASTA file and synthesis report you can hand to a molecular biology core facility.
 
-### What a real run produces
 
-Running on HCC1143 (a triple-negative breast cancer cell line), chr17 only, the pipeline:
-
-- Called somatic variants with GATK Mutect2 (tumor vs. matched normal)
-- Predicted MHC binding for all candidate peptides with MHCflurry 2.0
-- Ranked 30 neoantigen candidates from ~158 passing filters (128 removed as subclonal, VAF < 0.05)
-- Top candidate: **RSVAGVLHR** — HLA-A\*31:01, 25.7 nM affinity, presentation score 0.907, agretopicity 2.44
-- Assembled 13 unique epitopes into a 179 aa polyepitope string joined with GPGPG linkers
-- Codon-optimized and assembled a **870 nt mRNA construct** (GC 52.9%, MFE −348 kcal/mol)
-
----
 
 ## Pipeline
 
